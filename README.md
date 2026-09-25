@@ -45,7 +45,7 @@ Requires Python 3.10+, Node 20+, and ideally the
 [OpenCode CLI](https://opencode.ai) installed and logged in.
 
 ```bash
-pip install -e .[dev]
+pip install -e ".[dev]"
 cd ui && npm install && npm run build && cd ..
 uvicorn app.main:app --reload
 # open http://127.0.0.1:8000  (serves the built UI)
@@ -58,10 +58,10 @@ uvicorn app.main:app --reload        # terminal 1
 cd ui && npm run dev                 # terminal 2 -> http://127.0.0.1:5199
 ```
 
-Desktop shell (once Rust is installed):
+Desktop shell (once Rust is installed; the release bundles the service):
 
 ```bash
-cd ui && npm install -D @tauri-apps/cli && npx tauri dev
+cd ui && npm ci && npx tauri dev
 ```
 
 ## Quick start (server deploy)
@@ -107,3 +107,19 @@ pytest          # storage, detection, adapter (mocked server), broker, agent loo
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+## Downloadable Mac build (Apple Silicon)
+
+The [v0.1.0-mac release](https://github.com/Lesly-umgc/instinct_muse/releases/tag/v0.1.0-mac)
+contains an unsigned Apple Silicon `.dmg` built by GitHub Actions. Drag Instinct Muse
+into Applications. On first launch, macOS may block it because it is unsigned:
+right-click the app in Applications and select **Open**, then confirm. If macOS
+still blocks it, use System Settings > Privacy & Security > Open Anyway. Do not
+turn off Gatekeeper globally. Intel Macs are not supported by this build.
+
+The DMG includes a frozen Python app service, started by the app on loopback
+port 8000; no separate Python install is needed. The app still needs a working
+[OpenCode CLI](https://opencode.ai) installed and logged in for local AI chat.
+The OpenCode adapter has not yet been verified with a live login on a Mac.
+Feed, Ideas, and Goals remain placeholders. This is a pre-release, not a
+signed/notarized production app.

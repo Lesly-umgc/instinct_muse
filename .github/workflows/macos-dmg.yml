@@ -1,0 +1,47 @@
+name: macOS DMG
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['app/**', 'ui/**', 'pyproject.toml', '.github/workflows/macos-dmg.yml']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: macos-15-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ui/src-tauri
+      - name: Build Python service
+        run: |
+          python -m pip install --upgrade pip
+          pip install . pyinstaller
+          cd ui && npm ci && npm run build && cd ..
+          pyinstaller --onefile --clean --name muse-service --add-data 'ui/dist:ui/dist' --collect-all uvicorn --collect-all pydantic --collect-all pydantic_settings --collect-all fastapi --collect-all starlette app/desktop.py
+          cp dist/muse-service ui/src-tauri/binaries/muse-service-aarch64-apple-darwin
+          chmod +x ui/src-tauri/binaries/muse-service-aarch64-apple-darwin
+      - name: Build and publish unsigned DMG
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: ui
+          args: --target aarch64-apple-darwin
+          tagName: v0.1.0-mac
+          releaseName: Instinct Muse v0.1.0 Mac (unsigned)
+          releaseBody: 'Apple Silicon macOS DMG. Unsigned: right-click the app and choose Open on first launch. The Python service is bundled. OpenCode must be installed and logged in separately for the local engine; otherwise configure an API key.'
+          releaseDraft: false
+          prerelease: true

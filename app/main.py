@@ -1,8 +1,10 @@
 """Gateway: REST API, chat WebSocket, and the built UI if present."""
 from contextlib import asynccontextmanager
 from pathlib import Path
+import sys
 
 from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app import api
@@ -10,7 +12,7 @@ from app.api import Hub, conversation_ws, router
 from app.config import settings
 from app.store import Store
 
-UI_DIST = Path(__file__).resolve().parent.parent / "ui" / "dist"
+UI_DIST = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent)) / "ui" / "dist"
 
 
 @asynccontextmanager
@@ -24,6 +26,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Instinct Muse", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"], allow_methods=["GET", "POST"], allow_headers=["content-type"])
 app.include_router(router)
 
 
