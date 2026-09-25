@@ -111,6 +111,16 @@ class Store:
         self._exec("UPDATE conversations SET engine_session_id=? WHERE id=?",
                    (engine_session_id, cid))
 
+    def delete_conversation(self, cid: str) -> None:
+        """Remove a chat and everything that only makes sense with it.
+
+        Artifacts (Library files) and the diagnostic event log are kept: a
+        file the agent produced stays useful after its chat is gone.
+        """
+        self._exec("DELETE FROM messages WHERE conversation_id=?", (cid,))
+        self._exec("DELETE FROM approvals WHERE conversation_id=?", (cid,))
+        self._exec("DELETE FROM conversations WHERE id=?", (cid,))
+
     def touch_conversation(self, cid: str, title: str | None = None) -> None:
         if title:
             self._exec("UPDATE conversations SET updated_at=?, title=? WHERE id=?",

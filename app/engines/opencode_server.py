@@ -27,6 +27,10 @@ class OpenCodeServerEngine:
         auth = (username, password) if password else None
         self._base = base_url.rstrip("/")
         self._client = httpx.AsyncClient(base_url=self._base, auth=auth, timeout=timeout)
+        # The SSE bus needs its own client: the shared one has a finite timeout
+        # that would kill a long-lived event stream.
+        self._sse_client = httpx.AsyncClient(base_url=self._base, auth=auth, timeout=None)
+        self._sse_task: asyncio.Task | None = None
         self._responses: asyncio.Queue[EngineEvent] = asyncio.Queue()
 
     # -- status / catalog ------------------------------------------------
@@ -106,9 +110,34 @@ class OpenCodeServerEngine:
     # -- events -------------------------------------------------------------
     async def events(self) -> AsyncIterator[EngineEvent]:
         # Sync /message gives a reliable response without relying on OpenCode's
-        # currently unreliable SSE bus. The hub consumes this local queue.
+        # currently unreliable SSE bus for text. The bus is still the only way
+        # to see permission requests and session errors while a sync call is
+        # blocked, so listen to it for those event types only.
+        if self._sse_task is None:
+            self._sse_task = asyncio.create_task(self._sse_loop())
         while True:
             yield await self._responses.get()
+
+    async def _sse_loop(self) -> None:
+        """Forward permission requests and session errors from the SSE bus."""
+        while True:
+            try:
+                async with self._sse_client.stream("GET", "/event") as r:
+                    r.raise_for_status()
+                    async for line in r.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        try:
+                            payload = json.loads(line[5:].strip())
+                        except ValueError:
+                            continue
+                        ev = self._normalize(payload)
+                        if ev and ev.type in ("permission_request", "error"):
+                            await self._responses.put(ev)
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                await asyncio.sleep(2)  # reconnect after the stream drops
 
     @staticmethod
     def _normalize(payload: dict[str, Any]) -> EngineEvent | None:
@@ -134,7 +163,14 @@ class OpenCodeServerEngine:
         return None
 
     async def aclose(self) -> None:
+        if self._sse_task:
+            self._sse_task.cancel()
+            try:
+                await self._sse_task
+            except BaseException:
+                pass
         await self._client.aclose()
+        await self._sse_client.aclose()
 
 
 class ManagedOpenCodeServer:

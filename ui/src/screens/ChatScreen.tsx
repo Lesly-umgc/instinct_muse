@@ -6,6 +6,7 @@ interface LocalMessage {
   role: string;
   content: string;
   ts?: number;
+  streaming?: boolean;
 }
 
 export default function ChatScreen() {
@@ -18,7 +19,6 @@ export default function ChatScreen() {
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [draft, setDraft] = useState("");
-  const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -62,41 +62,70 @@ export default function ChatScreen() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streaming]);
+  }, [messages]);
 
-  const refreshConversations = () =>
-    api.conversations().then((r) => setConversations(r.conversations)).catch(() => {});
+  const refreshConversations = useCallback(() =>
+    api.conversations().then((r) => setConversations(r.conversations)).catch(() => {}), []);
 
   const openConversation = useCallback((conv: Conversation) => {
-    wsRef.current?.close();
-    setActive(conv);
-    setError("");
-    api.conversation(conv.id).then((full) => {
-      setMessages((full.messages ?? []).map((m: Message) => ({
-        role: m.role, content: m.content, ts: m.created_at,
-      })));
-    });
-    const ws = conversationSocket(conv.id, (ev) => {
-      if (ev.type === "text_delta") {
-        setStreaming(true);
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && last.role === "assistant" && streaming) {
-            return [...prev.slice(0, -1), { ...last, content: last.content + String(ev.text ?? "") }];
-          }
-          return [...prev, { role: "assistant", content: String(ev.text ?? "") }];
-        });
-      } else if (ev.type === "message_done") {
-        setStreaming(false);
-      } else if (ev.type === "approval") {
-        setApprovals((prev) => [...prev, ev.approval as Approval]);
-      } else if (ev.type === "error") {
-        setStreaming(false);
-        setError(String(ev.text ?? "unknown error"));
+    // Already viewing this chat on a live socket: reopening would drop and
+    // re-create the connection for no reason (the churn that lost replies).
+    const cur = wsRef.current;
+    setActive((prev) => {
+      if (prev?.id === conv.id && cur && (cur.readyState === WebSocket.OPEN || cur.readyState === WebSocket.CONNECTING)) {
+        return prev;
       }
+      cur?.close();
+      setError("");
+      api.conversation(conv.id).then((full) => {
+        setMessages((full.messages ?? []).map((m: Message) => ({
+          role: m.role, content: m.content, ts: m.created_at,
+        })));
+      });
+      const ws = conversationSocket(conv.id, (ev) => {
+        if (ev.type === "text_delta") {
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.role === "assistant" && last.streaming) {
+              return [...prev.slice(0, -1), { ...last, content: last.content + String(ev.text ?? "") }];
+            }
+            return [...prev, { role: "assistant", content: String(ev.text ?? ""), streaming: true }];
+          });
+        } else if (ev.type === "message_done") {
+          setMessages((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: undefined } : m)));
+          refreshConversations();
+        } else if (ev.type === "approval") {
+          setApprovals((prev) => [...prev, ev.approval as Approval]);
+        } else if (ev.type === "error") {
+          setMessages((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: undefined } : m)));
+          setError(String(ev.text ?? "unknown error"));
+        } else if (ev.type === "conversation_renamed") {
+          refreshConversations();
+          setActive((a) => (a && a.id === ev.conversation_id ? { ...a, title: String(ev.title ?? a.title) } : a));
+        } else if (ev.type === "conversation_deleted") {
+          if (ev.conversation_id === conv.id) {
+            setActive(null);
+            setMessages([]);
+          }
+          refreshConversations();
+        }
+      });
+      ws.onclose = () => {
+        // Unexpected drop (service restart, network blip): reconnect once after
+        // a short pause, but only if this socket is still the current one.
+        setTimeout(() => {
+          setActive((a) => {
+            if (a && a.id === conv.id && wsRef.current === ws && ws.readyState === WebSocket.CLOSED) {
+              openConversation(conv);
+            }
+            return a;
+          });
+        }, 1500);
+      };
+      wsRef.current = ws;
+      return conv;
     });
-    wsRef.current = ws;
-  }, [streaming]);
+  }, [refreshConversations]);
 
   useEffect(() => () => wsRef.current?.close(), []);
 
@@ -108,13 +137,41 @@ export default function ChatScreen() {
     openConversation(conv);
   };
 
+  const deleteChat = async (conv: Conversation) => {
+    if (!window.confirm(`Delete chat "${conv.title}"? This cannot be undone.`)) return;
+    try {
+      await api.deleteConversation(conv.id);
+    } catch (e) {
+      setError(String(e));
+      return;
+    }
+    if (active?.id === conv.id) {
+      setActive(null);
+      setMessages([]);
+    }
+    refreshConversations();
+  };
+
   const send = () => {
     const text = draft.trim();
-    if (!text || !active || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!text || !active) return;
+    const payload = JSON.stringify({ type: "message", text });
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(payload);
+    } else {
+      // Socket dropped: reconnect first so the message is never silently lost.
+      openConversation(active);
+      const fresh = wsRef.current;
+      if (fresh) {
+        const queue = () => {
+          if (fresh.readyState === WebSocket.OPEN) fresh.send(payload);
+        };
+        fresh.addEventListener("open", queue, { once: true });
+      }
+    }
     setMessages((prev) => [...prev, { role: "user", content: text, ts: Date.now() / 1000 }]);
-    wsRef.current.send(JSON.stringify({ type: "message", text }));
     setDraft("");
-    refreshConversations();
   };
 
   const decide = async (approval: Approval, decision: "allow" | "always" | "deny") => {
@@ -139,7 +196,13 @@ export default function ChatScreen() {
               className={`side-item ${active?.id === c.id ? "active" : ""}`}
               onClick={() => openConversation(c)}
             >
-              {c.title}
+              <span className="side-title">{c.title}</span>
+              <button
+                className="del-chat"
+                title="Delete chat"
+                aria-label={`Delete chat ${c.title}`}
+                onClick={(e) => { e.stopPropagation(); void deleteChat(c); }}
+              >×</button>
             </div>
           ))}
           {conversations.length === 0 && (
@@ -186,6 +249,7 @@ export default function ChatScreen() {
             {messages.map((m, i) => (
               <div key={i} className={`bubble ${m.role}`}>
                 {m.content}
+                {m.streaming && <span className="ts">...</span>}
                 {m.ts && <span className="ts">{new Date(m.ts * 1000).toLocaleTimeString()}</span>}
               </div>
             ))}

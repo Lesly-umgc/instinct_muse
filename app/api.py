@@ -11,7 +11,7 @@ import json
 import logging
 from contextlib import suppress
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket
 from pydantic import BaseModel
 
 from app.config import settings
@@ -21,6 +21,10 @@ from app.engines.detect import detect_all
 from app.store import Store
 
 log = logging.getLogger("instinct_muse")
+
+# OpenCode itself allows 300s round trips; give the full sync call that much
+# room before giving up and recording the failure as a visible chat message.
+REPLY_TIMEOUT_SECONDS = 300
 
 KIND_BY_EXT = {
     ".md": "document", ".txt": "document", ".pdf": "document", ".doc": "document",
@@ -163,23 +167,58 @@ class Hub:
         if not engine:
             raise RuntimeError(f"engine {conv['engine']} is not available")
         self.store.add_message(cid, "user", text)
+        await self._maybe_autotitle(conv, text)
         session_id = conv["engine_session_id"]
         if not session_id:
             session_id = await engine.create_session(title=conv["title"])
             self.store.set_engine_session(cid, session_id)
-            self._sessions[session_id] = cid
+        # Always (re)register the session->conversation mapping: after an app
+        # or service restart the Hub is empty while conversations still carry
+        # their engine_session_id, and replies without a mapping were silently
+        # discarded (never persisted, never broadcast).
+        self._sessions[session_id] = cid
         provider_id = model_id = None
         if conv["model"] and "/" in conv["model"]:
             provider_id, model_id = conv["model"].split("/", 1)
         self._buffers.setdefault(session_id, [])
         try:
-            await asyncio.wait_for(engine.send(session_id, text, provider_id, model_id), timeout=120)
+            await asyncio.wait_for(engine.send(session_id, text, provider_id, model_id),
+                                   timeout=REPLY_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
-            log.error("OpenCode request timed out (session %s)", session_id)
-            await self._broadcast(cid, {"type": "error", "text": "OpenCode did not reply within 2 minutes. Check ~/.instinct_muse/service.log."})
-        except Exception:
-            log.exception("engine request failed for session %s", session_id)
-            raise
+            log.error("turn timeout session=%s", session_id)
+            with suppress(Exception):
+                await engine.abort(session_id)
+            await self._persist_error(cid, session_id,
+                "OpenCode did not reply within %ds. The turn was aborted; send the message again."
+                % REPLY_TIMEOUT_SECONDS)
+        except Exception as exc:
+            log.exception("turn failed session=%s", session_id)
+            await self._persist_error(cid, session_id, f"OpenCode request failed: {exc}")
+
+    async def _persist_error(self, cid: str, session_id: str, text: str) -> None:
+        """Record a failed turn as a visible assistant message so the user is
+        never left staring at a silent spinner, and so the failure survives a
+        client reconnect."""
+        with suppress(Exception):
+            self.store.add_message(cid, "assistant", f"Error: {text}")
+        self.store.log_event("error", {"text": text, "session": session_id}, cid)
+        await self._broadcast(cid, {"type": "error", "text": text})
+        await self._broadcast(cid, {"type": "message_done"})
+
+    async def _maybe_autotitle(self, conv: dict, first_text: str) -> None:
+        """Name a chat after its first user message instead of leaving every
+        conversation titled "New chat"."""
+        if (conv.get("title") or "").strip().lower() != "new chat":
+            return
+        flat = " ".join(first_text.split())
+        snippet = flat[:48].rstrip()
+        if len(flat) > 48:
+            snippet = snippet.rsplit(" ", 1)[0] + "..."
+        title = snippet or "Chat"
+        self.store.touch_conversation(conv["id"], title)
+        await self._broadcast(conv["id"],
+                              {"type": "conversation_renamed",
+                               "conversation_id": conv["id"], "title": title})
 
 
 router = APIRouter(prefix="/api")
@@ -245,6 +284,27 @@ async def get_conversation(cid: str) -> dict:
     return conv
 
 
+@router.delete("/conversations/{cid}", status_code=204)
+async def delete_conversation(cid: str) -> None:
+    conv = hub.store.get_conversation(cid)
+    if not conv:
+        raise HTTPException(404, "conversation not found")
+    session_id = conv["engine_session_id"]
+    if session_id:
+        engine = hub.engines.get(conv["engine"])
+        if engine:
+            with suppress(Exception):
+                await engine.abort(session_id)
+        hub._sessions.pop(session_id, None)
+        hub._buffers.pop(session_id, None)
+    hub.store.delete_conversation(cid)
+    await hub._broadcast(cid, {"type": "conversation_deleted", "conversation_id": cid})
+    for ws in list(hub._sockets.get(cid, set())):
+        with suppress(Exception):
+            await ws.close(code=1000)
+    hub._sockets.pop(cid, None)
+
+
 @router.get("/artifacts")
 async def list_artifacts(kind: str | None = None) -> dict:
     return {"artifacts": hub.store.list_artifacts(kind)}
@@ -299,11 +359,20 @@ async def conversation_ws(ws: WebSocket, cid: str) -> None:
                 await ws.send_text(json.dumps({"type": "error", "text": "expected JSON"}))
                 continue
             if msg.get("type") == "message" and msg.get("text", "").strip():
-                try:
-                    await hub.send_user_message(cid, msg["text"].strip())
-                except Exception as exc:
-                    await ws.send_text(json.dumps({"type": "error", "text": str(exc)}))
-    except WebSocketDisconnect:
+                # Run the engine round-trip in the background: the receive loop
+                # must stay responsive, and a client disconnect or UI
+                # chat-switch must not strand or crash an in-flight reply.
+                asyncio.create_task(_send_safe(cid, msg["text"].strip()))
+    except Exception:
+        # WebSocketDisconnect on a normal close, WebSocketDisconnected/RuntimeError
+        # on a mid-request disconnect race: all of them just mean "client gone".
         pass
     finally:
         hub._sockets.get(cid, set()).discard(ws)
+
+
+async def _send_safe(cid: str, text: str) -> None:
+    try:
+        await hub.send_user_message(cid, text)
+    except Exception:
+        log.exception("send failed conversation=%s", cid)

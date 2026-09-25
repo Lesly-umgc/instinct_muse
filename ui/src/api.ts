@@ -24,6 +24,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`Cannot reach app service at ${serviceOrigin}. Check ~/.instinct_muse/desktop.log and ~/.instinct_muse/service.log. (${String(cause)})`);
   }
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
@@ -38,6 +39,8 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title, engine, model }),
     }),
+  deleteConversation: (id: string) =>
+    req<void>(`/api/conversations/${id}`, { method: "DELETE" }),
   artifacts: () => req<{ artifacts: Artifact[] }>("/api/artifacts"),
   artifact: (id: string) => req<Artifact>(`/api/artifacts/${id}`),
   pendingApprovals: () => req<{ approvals: Approval[] }>("/api/approvals?status=pending"),
