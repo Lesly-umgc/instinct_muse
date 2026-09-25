@@ -1,0 +1,185 @@
+name: Demo video
+on:
+  workflow_dispatch:
+  push:
+    branches: [demo]
+permissions:
+  contents: read
+jobs:
+  record:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the published v0.1.6 DMG
+        run: |
+          mkdir -p /tmp/muse-dmg
+          curl -sfL "https://github.com/Lesly-umgc/instinct_muse/releases/download/v0.1.6-mac/Instinct.Muse_0.1.6_aarch64.dmg" -o /tmp/muse-dmg/muse.dmg
+          ls -l /tmp/muse-dmg/
+      - name: Install OpenCode CLI
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ok=0
+          for i in 1 2 3 4 5; do
+            if curl -fsSL --retry 3 https://opencode.ai/install | bash -s -- --version 1.18.32; then ok=1; break; fi
+            echo "opencode install attempt $i failed, retrying in 15s"
+            sleep 15
+          done
+          test "$ok" = 1
+          "$HOME/.opencode/bin/opencode" --version
+      - name: Install the app like a user
+        run: |
+          set -euo pipefail
+          mount_dir="$RUNNER_TEMP/muse-mounted"
+          mkdir -p "$mount_dir"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" /tmp/muse-dmg/muse.dmg
+          mkdir -p "$HOME/Applications"
+          ditto "$mount_dir/Instinct Muse.app" "$HOME/Applications/Instinct Muse.app"
+          hdiutil detach "$mount_dir"
+          xattr -dr com.apple.quarantine "$HOME/Applications/Instinct Muse.app" 2>/dev/null || true
+          ls "$HOME/Applications/Instinct Muse.app/Contents/MacOS"
+      - name: Driver dependencies
+        run: |
+          python3 -m venv /tmp/e2e-venv
+          /tmp/e2e-venv/bin/pip install --quiet websockets
+      - name: ffmpeg check
+        run: which ffmpeg && ffmpeg -version | head -1
+      - name: Launch app and wait for service
+        run: |
+          open -a "$HOME/Applications/Instinct Muse.app"
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:18764/health && break || sleep 2
+          done
+          curl -sf http://127.0.0.1:18764/health | grep -q instinct_muse
+      - name: Seed real data
+        run: |
+          /tmp/e2e-venv/bin/python - <<'PYEOF'
+          import asyncio, sys
+          sys.path.insert(0, "e2e")
+          import driver
+          BASE = "http://127.0.0.1:18764"
+          MODEL = "opencode/muse-spark-1.3-contributor-free"
+
+          def mkconv(title):
+              st, conv = driver.req(BASE, "POST", "/api/conversations",
+                                    {"title": title, "engine": "opencode_server", "model": MODEL})
+              assert st == 201, conv
+              return conv["id"]
+
+          async def main():
+              cid = mkconv("Weekend plans")
+              await driver.ws_turn(BASE, cid, "Suggest one fun weekend activity in Toronto. One sentence.")
+              cid_a = mkconv("Toronto notes")
+              for prompt in [
+                  "Create a text file named toronto-notes.txt containing exactly 'hello muse'. Then stop.",
+                  "You did not create the file. Use your file tool now to write toronto-notes.txt containing exactly 'hello muse'.",
+                  "Last try: call your bash or write tool to create the file toronto-notes.txt with content 'hello muse'. Do not just describe it - actually create it.",
+              ]:
+                  await driver.ws_turn(BASE, cid_a, prompt)
+                  st, arts = driver.req(BASE, "GET", "/api/artifacts")
+                  if arts.get("artifacts"):
+                      break
+              cid2 = mkconv("Streaming demo")
+              st, _ = driver.req(BASE, "POST", "/api/goals", {"title": "Train for a 10k", "category": "Health"})
+              st, _ = driver.req(BASE, "POST", "/api/feed/refresh")
+              with open("/tmp/demo-ids.env", "w") as f:
+                  f.write(f"CID={cid}\nCID2={cid2}\n")
+              print("seeded", cid, cid2)
+
+          asyncio.run(main())
+          PYEOF
+          cat /tmp/demo-ids.env
+      - name: Wait for the feed edition
+        run: |
+          for i in $(seq 1 48); do
+            n=$(curl -sf http://127.0.0.1:18764/api/feed | /tmp/e2e-venv/bin/python -c 'import sys,json; print(len(json.load(sys.stdin)["editions"]))' 2>/dev/null || echo 0)
+            [ "$n" -gt 0 ] && break
+            [ "$i" = 24 ] && curl -sf -X POST http://127.0.0.1:18764/api/feed/refresh || true
+            sleep 5
+          done
+          echo "feed editions: $n"
+      - name: Record segments
+        run: |
+          source /tmp/demo-ids.env
+          mkdir -p /tmp/demo/segs
+          bin="$HOME/Applications/Instinct Muse.app/Contents/MacOS/instinct-muse"
+          shot() {  # name rec_seconds [env assignments...]
+            name=$1; secs=$2; shift 2
+            pkill -f 'Instinct Muse' || true
+            pkill -f muse-service || true
+            sleep 2
+            env "$@" "$bin" >/dev/null 2>&1 &
+            sleep 8
+            screencapture -V"$secs" "/tmp/demo/segs/$name.mov" 2>/dev/null || true
+            if [ ! -s "/tmp/demo/segs/$name.mov" ] || [ "$(stat -f%z "/tmp/demo/segs/$name.mov" 2>/dev/null || echo 0)" -lt 200000 ]; then
+              echo "video capture failed for $name - timelapse fallback"
+              mkdir -p "/tmp/demo/tl-$name"
+              frames=$((secs * 2))
+              for i in $(seq 1 $frames); do
+                screencapture -x "/tmp/demo/tl-$name/f$(printf %03d $i).png" || true
+                sleep 0.5
+              done
+              ffmpeg -y -loglevel error -framerate 4 -i "/tmp/demo/tl-$name/f%03d.png" -c:v libx264 -pix_fmt yuv420p "/tmp/demo/segs/$name.mov"
+            fi
+            ls -l "/tmp/demo/segs/$name.mov"
+          }
+          # live turn first, in its own conversation
+          pkill -f 'Instinct Muse' || true
+          pkill -f muse-service || true
+          sleep 2
+          MUSE_INITIAL_SCREEN=chat MUSE_INITIAL_CHAT=$CID2 "$bin" >/dev/null 2>&1 &
+          sleep 8
+          /tmp/e2e-venv/bin/python - "$CID2" <<'PYEOF' &
+          import asyncio, sys, json, websockets
+          async def go(cid):
+              try:
+                  async with websockets.connect("ws://127.0.0.1:18764/ws/conversations/" + cid) as ws:
+                      await ws.send(json.dumps({"type": "message", "text": "Count from 1 to 30, one number per line."}))
+                      await asyncio.sleep(60)
+              except Exception as e:
+                  print("demo prompt failed:", e)
+          asyncio.run(go(sys.argv[1]))
+          PYEOF
+          screencapture -V14 /tmp/demo/segs/02-live.mov 2>/dev/null || true
+          if [ ! -s /tmp/demo/segs/02-live.mov ] || [ "$(stat -f%z /tmp/demo/segs/02-live.mov 2>/dev/null || echo 0)" -lt 200000 ]; then
+            echo 'live video failed - timelapse fallback'
+            mkdir -p /tmp/demo/tl-02-live
+            for i in $(seq 1 28); do
+              screencapture -x "/tmp/demo/tl-02-live/f$(printf %03d $i).png" || true
+              sleep 0.5
+            done
+            ffmpeg -y -loglevel error -framerate 4 -i /tmp/demo/tl-02-live/f%03d.png -c:v libx264 -pix_fmt yuv420p /tmp/demo/segs/02-live.mov
+          fi
+          sleep 15
+          shot 01-chat 6 MUSE_INITIAL_SCREEN=chat MUSE_INITIAL_CHAT=$CID
+          shot 03-feed 5 MUSE_INITIAL_SCREEN=feed
+          shot 04-ideas 4 MUSE_INITIAL_SCREEN=ideas
+          shot 05-goals 4 MUSE_INITIAL_SCREEN=goals
+          shot 06-goal-detail 5 MUSE_INITIAL_SCREEN=goals MUSE_INITIAL_GOAL=x
+          shot 07-library 4 MUSE_INITIAL_SCREEN=library
+          shot 08-artifact 5 MUSE_INITIAL_SCREEN=library MUSE_INITIAL_ARTIFACT=x
+          shot 09-search 5 MUSE_INITIAL_SCREEN=search MUSE_INITIAL_SEARCH=weekend
+          shot 10-settings 4 MUSE_INITIAL_SCREEN=settings
+          shot 11-settings-connectors 4 MUSE_INITIAL_SCREEN=settings MUSE_SETTINGS_SECTION=connectors
+          pkill -f 'Instinct Muse' || true
+          ls -l /tmp/demo/segs/
+      - name: Assemble the demo mp4
+        run: |
+          cd /tmp/demo/segs
+          for f in *.mov; do echo "file '$PWD/$f'"; done | sort > /tmp/demo/list.txt
+          cat /tmp/demo/list.txt
+          ffmpeg -y -loglevel error -f concat -safe 0 -i /tmp/demo/list.txt \
+            -an -c:v libx264 -crf 27 -preset medium -pix_fmt yuv420p -movflags +faststart \
+            /tmp/demo/instinct-muse-demo.mp4
+          ls -l /tmp/demo/instinct-muse-demo.mp4
+          ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_name,width,height -of default=noprint_wrappers=1 /tmp/demo/instinct-muse-demo.mp4
+          # review frames
+          ffmpeg -y -loglevel error -i /tmp/demo/instinct-muse-demo.mp4 -vf "select='eq(n\,30)+eq(n\,150)+eq(n\,300)+eq(n\,450)',scale=640:-1" -vsync vfr /tmp/demo/review-%d.png
+          ls /tmp/demo/
+      - name: Upload demo video
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-video
+          include-hidden-files: true
+          path: /tmp/demo/
+          retention-days: 7
