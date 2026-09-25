@@ -51,7 +51,7 @@ export const api = {
       body: JSON.stringify({ decision }),
     }),
 
-  config: () => req<{ initial_screen: string; version?: string; data_dir?: string }>("/api/config"),
+  config: () => req<{ initial_screen: string; initial_chat?: string; version?: string; data_dir?: string }>("/api/config"),
   allApprovals: () => req<{ approvals: Approval[] }>("/api/approvals"),
   exportData: () => req<Record<string, unknown[]>>("/api/data/export"),
   resetData: () => req<void>("/api/data/reset", { method: "POST" }),

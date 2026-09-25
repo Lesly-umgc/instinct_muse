@@ -15,7 +15,7 @@ interface LocalMessage {
 
 const MAIN_CHAT_KEY = "muse.mainChatId";
 
-export default function ChatScreen() {
+export default function ChatScreen({ initialChatId }: { initialChatId?: string }) {
   const [engines, setEngines] = useState<EngineStatus[]>([]);
   const [engine, setEngine] = useState<string>("");
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -55,7 +55,14 @@ export default function ChatScreen() {
           ?? r.engines.find((e) => e.id === r.default && e.available)
           ?? r.engines.find((e) => e.available && !e.id.startsWith("cli:"));
         if (first) setEngine(first.id);
-        api.conversations().then((r) => { if (!cancelled) setConversations(r.conversations); }).catch((e) => setError(String(e)));
+        api.conversations().then((r) => {
+          if (cancelled) return;
+          setConversations(r.conversations);
+          if (initialChatId) {
+            const target = r.conversations.find((c) => c.id === initialChatId);
+            if (target) openConversationRef.current(target);
+          }
+        }).catch((e) => setError(String(e)));
         api.pendingApprovals().then((r) => { if (!cancelled) setApprovals(r.approvals); }).catch(() => {});
       } catch (e) {
         if (!cancelled) { setServiceState("unavailable"); setError(String(e)); }
@@ -88,6 +95,7 @@ export default function ChatScreen() {
   const refreshConversations = useCallback(() =>
     api.conversations().then((r) => setConversations(r.conversations)).catch(() => {}), []);
 
+  const openConversationRef = useRef((conv: Conversation) => { void conv; });
   const openConversation = useCallback((conv: Conversation) => {
     const cur = wsRef.current;
     setActive((prev) => {
@@ -148,6 +156,7 @@ export default function ChatScreen() {
       return conv;
     });
   }, [refreshConversations]);
+  openConversationRef.current = openConversation;
 
   useEffect(() => () => wsRef.current?.close(), []);
 

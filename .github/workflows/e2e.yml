@@ -145,11 +145,31 @@ jobs:
         run: |
           mkdir -p /tmp/shots
           bin="$HOME/Applications/Instinct Muse.app/Contents/MacOS/instinct-muse"
+          # showcase conversation with a real reply for the chat screenshot
+          cid=$(curl -sf -X POST http://127.0.0.1:18764/api/conversations -H 'Content-Type: application/json' -d '{"title":"Weekend plans","kind":"side"}' | /tmp/e2e-venv/bin/python -c 'import sys,json; print(json.load(sys.stdin)["id"])' 2>/dev/null || true)
+          if [ -n "$cid" ]; then
+            /tmp/e2e-venv/bin/python - "$cid" <<'PYEOF' || true
+          import asyncio, sys
+          sys.path.insert(0, "e2e")
+          import driver
+          cid = sys.argv[1]
+          try:
+              asyncio.run(driver.ws_turn("http://127.0.0.1:18764", cid, "Suggest one fun weekend activity in Toronto. One sentence."))
+              print("showcase turn ok")
+          except Exception as e:
+              print("showcase turn failed:", e)
+          PYEOF
+          fi
+          echo "showcase cid: $cid"
           for scr in chat feed ideas goals library search settings; do
             pkill -f 'Instinct Muse' || true
             pkill -f muse-service || true
             sleep 2
-            MUSE_INITIAL_SCREEN=$scr "$bin" >/dev/null 2>&1 &
+            if [ "$scr" = chat ] && [ -n "$cid" ]; then
+              MUSE_INITIAL_SCREEN=$scr MUSE_INITIAL_CHAT=$cid "$bin" >/dev/null 2>&1 &
+            else
+              MUSE_INITIAL_SCREEN=$scr "$bin" >/dev/null 2>&1 &
+            fi
             sleep 8
             screencapture -x "/tmp/shots/ui-$scr.png" || echo "screencapture $scr failed"
           done
