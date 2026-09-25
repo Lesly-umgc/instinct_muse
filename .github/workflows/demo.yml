@@ -175,7 +175,7 @@ jobs:
           ffmpeg -y -loglevel error -f concat -safe 0 -i /tmp/demo/list.txt \
             -an -c:v libx264 -crf 27 -preset medium -pix_fmt yuv420p -movflags +faststart \
             /tmp/demo/instinct-muse-demo.mp4
-          ls -l /tmp/demo/instinct-muse-demo.mp4 || echo 'MP4 MISSING - concat failed
+          ls -l /tmp/demo/instinct-muse-demo.mp4 || echo "MP4 MISSING - concat failed"
           ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_name,width,height -of default=noprint_wrappers=1 /tmp/demo/instinct-muse-demo.mp4
           # review frames
           ffmpeg -y -loglevel error -i /tmp/demo/instinct-muse-demo.mp4 -vf "select='eq(n\,30)+eq(n\,150)+eq(n\,300)+eq(n\,450)',scale=640:-1" -fps_mode vfr /tmp/demo/review-%d.png
