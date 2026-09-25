@@ -96,6 +96,28 @@ export default function ChatScreen({ initialChatId }: { initialChatId?: string }
     api.conversations().then((r) => setConversations(r.conversations)).catch(() => {}), []);
 
   const openConversationRef = useRef((conv: Conversation) => { void conv; });
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [attaching, setAttaching] = useState(false);
+  const onAttach = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setAttaching(true);
+    try {
+      const buf = await file.arrayBuffer();
+      let bin = "";
+      const bytes = new Uint8Array(buf);
+      for (let i = 0; i < bytes.length; i += 8192) {
+        bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      }
+      const r = await api.uploadAttachment(file.name, btoa(bin));
+      setDraft((d) => (d ? d + "\n" : "") + `[Attached file: ${r.path}]`);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setAttaching(false);
+    }
+  };
   const openConversation = useCallback((conv: Conversation) => {
     const cur = wsRef.current;
     setActive((prev) => {
@@ -383,9 +405,16 @@ export default function ChatScreen({ initialChatId }: { initialChatId?: string }
         </div>
         <div className="composer">
           <div className="composer-inner">
-            <button className="composer-plus" aria-label="Attach" disabled={!active}>
+            <button className="composer-plus" aria-label="Attach" disabled={!active || attaching}
+              onClick={() => fileInputRef.current?.click()}>
               <PlusIcon />
             </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              style={{ display: "none" }}
+              onChange={onAttach}
+            />
             <textarea
               rows={1}
               placeholder={active ? "Message" : "Open a chat first"}

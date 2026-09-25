@@ -14,6 +14,7 @@ from contextlib import suppress
 import time as _time
 from pathlib import Path
 
+import base64
 from fastapi import APIRouter, HTTPException, WebSocket
 from pydantic import BaseModel
 
@@ -322,6 +323,29 @@ def get_config():
         "version": settings.app_version,
         "data_dir": str(Path.home() / ".instinct_muse"),
     }
+
+
+@router.post("/attachments", status_code=201)
+async def save_attachment(payload: dict) -> dict:
+    """Save a user-picked file into the agent workspace uploads folder."""
+    name = str(payload.get("name") or "attachment")
+    safe = "".join(c for c in name if c.isalnum() or c in "._- ").strip() or "attachment"
+    data = payload.get("data_b64") or ""
+    try:
+        raw = base64.b64decode(data)
+    except Exception:
+        raise HTTPException(400, "invalid base64 data")
+    if len(raw) > 50 * 1024 * 1024:
+        raise HTTPException(413, "file too large (50 MB max)")
+    uploads = Path.home() / ".instinct_muse" / "workspace" / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    dest = uploads / safe
+    n = 1
+    while dest.exists():
+        dest = uploads / f"{dest.stem}-{n}{dest.suffix}"
+        n += 1
+    dest.write_bytes(raw)
+    return {"path": str(dest)}
 
 
 @router.get("/engines")

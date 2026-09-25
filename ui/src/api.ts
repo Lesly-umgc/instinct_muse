@@ -53,6 +53,8 @@ export const api = {
 
   config: () => req<{ initial_screen: string; initial_chat?: string; initial_settings_section?: string; version?: string; data_dir?: string }>("/api/config"),
   allApprovals: () => req<{ approvals: Approval[] }>("/api/approvals"),
+  uploadAttachment: (name: string, dataB64: string) =>
+    req<{ path: string }>("/api/attachments", { method: "POST", body: JSON.stringify({ name, data_b64: dataB64 }) }),
   exportData: () => req<Record<string, unknown[]>>("/api/data/export"),
   resetData: () => req<void>("/api/data/reset", { method: "POST" }),
   goals: () => req<{ goals: Goal[] }>("/api/goals"),
