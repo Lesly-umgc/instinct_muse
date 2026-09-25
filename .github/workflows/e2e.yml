@@ -82,8 +82,16 @@ jobs:
           name: muse-dmg
           path: /tmp/muse-dmg
       - name: Install OpenCode CLI
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -fsSL https://opencode.ai/install | bash
+          ok=0
+          for i in 1 2 3 4 5; do
+            if curl -fsSL --retry 3 https://opencode.ai/install | bash; then ok=1; break; fi
+            echo "opencode install attempt $i failed, retrying in 15s"
+            sleep 15
+          done
+          test "$ok" = 1
           "$HOME/.opencode/bin/opencode" --version
       - name: Install the app like a user
         run: |
@@ -129,7 +137,9 @@ jobs:
         run: /tmp/e2e-venv/bin/python e2e/driver.py --stage post-restart
       - name: Final screenshot
         if: always()
-        run: screencapture -x /tmp/shots/02-final.png || echo 'screencapture failed'
+        run: |
+          mkdir -p /tmp/shots
+          screencapture -x /tmp/shots/02-final.png || echo 'screencapture failed'
       - name: Screenshot every UI screen
         if: always()
         run: |
