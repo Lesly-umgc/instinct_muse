@@ -27,6 +27,7 @@ class OpenCodeServerEngine:
         auth = (username, password) if password else None
         self._base = base_url.rstrip("/")
         self._client = httpx.AsyncClient(base_url=self._base, auth=auth, timeout=timeout)
+        self._responses: asyncio.Queue[EngineEvent] = asyncio.Queue()
 
     # -- status / catalog ------------------------------------------------
     async def status(self) -> EngineStatus:
@@ -70,8 +71,14 @@ class OpenCodeServerEngine:
         body: dict[str, Any] = {"parts": [{"type": "text", "text": text}]}
         if provider_id and model_id:
             body["model"] = {"providerID": provider_id, "modelID": model_id}
-        r = await self._client.post(f"/session/{session_id}/prompt_async", json=body)
+        # OpenCode 1.18.x can accept prompt_async with 204 while delivering no
+        # SSE events. Use the sync endpoint and emit its durable response.
+        r = await self._client.post(f"/session/{session_id}/message", json=body)
         r.raise_for_status()
+        response = r.json()
+        text = "".join(part.get("text", "") for part in response.get("parts", []) if part.get("type") == "text")
+        await self._responses.put(EngineEvent("text_delta", session_id=session_id, text=text))
+        await self._responses.put(EngineEvent("message_done", session_id=session_id))
 
     async def abort(self, session_id: str) -> None:
         r = await self._client.post(f"/session/{session_id}/abort")
@@ -98,20 +105,10 @@ class OpenCodeServerEngine:
 
     # -- events -------------------------------------------------------------
     async def events(self) -> AsyncIterator[EngineEvent]:
-        """Subscribe to the server SSE bus and normalize events."""
-        async with self._client.stream("GET", "/event") as r:
-            r.raise_for_status()
-            async for line in r.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                try:
-                    envelope = json.loads(line[5:].strip())
-                except json.JSONDecodeError:
-                    continue
-                payload = envelope.get("payload", envelope)
-                ev = self._normalize(payload)
-                if ev:
-                    yield ev
+        # Sync /message gives a reliable response without relying on OpenCode's
+        # currently unreliable SSE bus. The hub consumes this local queue.
+        while True:
+            yield await self._responses.get()
 
     @staticmethod
     def _normalize(payload: dict[str, Any]) -> EngineEvent | None:

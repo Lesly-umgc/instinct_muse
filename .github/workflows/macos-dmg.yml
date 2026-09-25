@@ -42,6 +42,7 @@ jobs:
           set -euo pipefail
           app="ui/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Instinct Muse.app"
           sidecar="$app/Contents/MacOS/muse-service"
+          ls -la "$app/Contents/MacOS"
           test -x "$sidecar"
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign --verify --strict --verbose=2 "$sidecar"
@@ -59,7 +60,8 @@ jobs:
             sleep 1
           done
           curl --fail --silent http://127.0.0.1:18764/health | grep -q '"system":"instinct_muse"'
-          test -s ui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          ls -lh ui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/
+          for dmg in ui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg; do test -s "$dmg"; done
           kill "$service_pid" 2>/dev/null || true
           wait "$service_pid" 2>/dev/null || true
           # Also launch the packaged shell so missing permissions/sidecar paths

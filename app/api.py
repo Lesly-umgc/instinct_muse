@@ -172,7 +172,14 @@ class Hub:
         if conv["model"] and "/" in conv["model"]:
             provider_id, model_id = conv["model"].split("/", 1)
         self._buffers.setdefault(session_id, [])
-        await engine.send(session_id, text, provider_id, model_id)
+        try:
+            await asyncio.wait_for(engine.send(session_id, text, provider_id, model_id), timeout=120)
+        except asyncio.TimeoutError:
+            log.error("OpenCode request timed out (session %s)", session_id)
+            await self._broadcast(cid, {"type": "error", "text": "OpenCode did not reply within 2 minutes. Check ~/.instinct_muse/service.log."})
+        except Exception:
+            log.exception("engine request failed for session %s", session_id)
+            raise
 
 
 router = APIRouter(prefix="/api")

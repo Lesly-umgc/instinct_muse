@@ -48,13 +48,16 @@ async def test_models_only_connected_providers():
 @respx.mock
 async def test_session_send_and_permission_reply():
     respx.post(f"{BASE}/session").mock(return_value=httpx.Response(200, json={"id": "ses_1"}))
-    prompt = respx.post(f"{BASE}/session/ses_1/prompt_async").mock(return_value=httpx.Response(204))
+    prompt = respx.post(f"{BASE}/session/ses_1/message").mock(return_value=httpx.Response(200, json={"parts": [{"type": "text", "text": "Hello"}]}))
     perm = respx.post(f"{BASE}/session/ses_1/permissions/perm_1").mock(
         return_value=httpx.Response(200, json=True))
     engine = OpenCodeServerEngine(BASE)
     session_id = await engine.create_session("test")
     assert session_id == "ses_1"
     await engine.send(session_id, "make hello.md", "opencode", "big-pickle")
+    events = engine.events()
+    assert (await anext(events)).text == "Hello"
+    assert (await anext(events)).type == "message_done"
     assert prompt.called
     body = prompt.calls.last.request.read()
     assert b"make hello.md" in body and b"big-pickle" in body
