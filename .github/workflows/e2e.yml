@@ -87,7 +87,7 @@ jobs:
         run: |
           ok=0
           for i in 1 2 3 4 5; do
-            if curl -fsSL --retry 3 https://opencode.ai/install | bash; then ok=1; break; fi
+            if curl -fsSL --retry 3 https://opencode.ai/install | bash -s -- --version 1.18.32; then ok=1; break; fi
             echo "opencode install attempt $i failed, retrying in 15s"
             sleep 15
           done
