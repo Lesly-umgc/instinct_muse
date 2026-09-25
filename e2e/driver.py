@@ -77,7 +77,7 @@ async def ws_turn(base: str, cid: str, text: str, timeout: float = 600.0) -> dic
 def last_assistant_text(conv: dict) -> str:
     for m in reversed(conv.get("messages", [])):
         if m.get("role") == "assistant":
-            return m.get("text", "")
+            return m.get("content", "")
     return ""
 
 
