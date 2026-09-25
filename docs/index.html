@@ -12,7 +12,7 @@
   <div class="wrap">
     <p class="tag">Open source · Apache-2.0</p>
     <h1>instinct_muse</h1>
-    <p class="lead">A personal AI agent you can run yourself. The agent works inside a sandbox. Your credentials and network access stay outside it.</p>
+    <p class="lead">A personal AI agent with a real desktop UI. It detects the agent CLIs already on your Mac and rides their logins - no API key to configure. You pick the engine and model per chat; the sandbox, credential broker and egress gate keep tools on a leash.</p>
     <p class="cta"><a class="btn" href="https://github.com/Lesly-umgc/instinct_muse">View on GitHub</a> <a class="btn ghost" href="#quickstart">Quick start</a></p>
   </div>
 </header>
@@ -21,12 +21,13 @@
   <section>
     <h2>How it works</h2>
     <div class="grid">
-      <div class="card"><h3>Gateway</h3><p>FastAPI app with web chat over WebSocket. Runs the agent loop and keeps state in Postgres.</p></div>
+      <div class="card"><h3>Mac app</h3><p>Tauri + React interface: Chat, Feed, Ideas, Goals and Library. Streaming replies and inline Allow / Deny approval cards.</p></div>
+      <div class="card"><h3>App service</h3><p>FastAPI + SQLite own conversations, memory, goals, approvals and scheduling - independent of the engine, so engines stay swappable.</p></div>
       <div class="card"><h3>Sandbox</h3><p>Code the agent runs goes into a locked-down container: non-root, no capabilities, no direct internet.</p></div>
       <div class="card"><h3>Credential broker</h3><p>The agent only sees surrogate tokens. Real OAuth tokens never enter the sandbox.</p></div>
       <div class="card"><h3>Egress gate</h3><p>Every outbound request is checked against an allowlist. Real tokens are swapped in at the last step.</p></div>
       <div class="card"><h3>Browser worker</h3><p>Headless Chromium through Playwright. The agent reads accessibility-tree snapshots, not raw HTML.</p></div>
-      <div class="card"><h3>Model</h3><p>OpenCode Zen by default, behind a small provider interface so you can swap models.</p></div>
+      <div class="card"><h3>Any engine</h3><p>OpenCode first, driven through its local server on your existing login. Codex and direct API keys plug into the same adapter interface.</p></div>
     </div>
   </section>
 
@@ -41,7 +42,8 @@
         <tr><td>Surrogate OAuth tokens</td><td>Token broker</td></tr>
         <tr><td>Sentinel egress gate</td><td>Allowlist proxy with token swap</td></tr>
         <tr><td>Chromium sub-agent on accessibility trees</td><td>Playwright browser worker</td></tr>
-        <tr><td>Muse Spark model</td><td>OpenCode Zen (swappable)</td></tr>
+        <tr><td>Muse Spark model</td><td>Any engine: local OpenCode login, Zen API, Codex (planned)</td></tr>
+        <tr><td>iOS / Android / web clients</td><td>Mac app (Tauri + React), web UI over the same API</td></tr>
       </tbody>
     </table>
     </div>
@@ -52,18 +54,21 @@
     <h2>Quick start</h2>
 <pre><code>git clone https://github.com/Lesly-umgc/instinct_muse.git
 cd instinct_muse
-cp .env.example .env   # add OPENCODE_API_KEY
-docker compose up --build</code></pre>
-    <p>Then connect a WebSocket client to <code>ws://localhost:8000/ws/chat</code>.</p>
+pip install -e .[dev]
+cd ui && npm install && npm run build && cd ..
+uvicorn app.main:app --reload
+# open http://127.0.0.1:8000</code></pre>
+    <p>With the <a href="https://opencode.ai">OpenCode CLI</a> installed and logged in, the app detects it and spawns its server - no API key needed. A direct OpenCode Zen API key also works as a fallback engine. Server deploy with Docker Compose is in the README.</p>
   </section>
 
   <section>
     <h2>Roadmap</h2>
     <ol class="roadmap">
-      <li><b>Week 1:</b> gateway, chat and agent loop</li>
-      <li><b>Week 2:</b> sandboxed shell tool</li>
-      <li><b>Week 3:</b> browser worker actions</li>
-      <li><b>Week 4:</b> egress gate and surrogate tokens for connectors</li>
+      <li><b>Phase 0:</b> OpenCode engine spike: streaming, auth, cancel/resume, approval events</li>
+      <li><b>Phase 1 (current):</b> app service + SQLite, engine adapters, CLI detection, React UI (Chat / Feed / Ideas / Goals / Library), Tauri scaffold</li>
+      <li><b>Phase 2:</b> memory, goals, durable scheduling, feed generation, connectors via the broker</li>
+      <li><b>Phase 3:</b> Mac polish: quick-chat shortcut, dictation, menu bar, signed installer</li>
+      <li><b>Phase 4:</b> remote worker for jobs while the Mac sleeps</li>
     </ol>
   </section>
 </main>

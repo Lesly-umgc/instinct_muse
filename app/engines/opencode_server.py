@@ -1,0 +1,182 @@
+"""OpenCode engine: drive a local `opencode serve` instance over HTTP + SSE.
+
+No API key is needed when the OpenCode CLI is already logged in - the server
+rides the CLI's own provider auth. Auth methods and OAuth flows are exposed by
+the server itself (GET /provider/auth, POST /provider/{id}/oauth/*) for engines
+that still need a login.
+
+API reference: https://opencode.ai/docs/server/
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import Any, AsyncIterator
+
+import httpx
+
+from app.engines.base import EngineEvent, EngineStatus, ModelInfo
+
+
+class OpenCodeServerEngine:
+    id = "opencode_server"
+    name = "OpenCode"
+
+    def __init__(self, base_url: str, password: str = "", username: str = "opencode",
+                 timeout: float = 300.0):
+        auth = (username, password) if password else None
+        self._base = base_url.rstrip("/")
+        self._client = httpx.AsyncClient(base_url=self._base, auth=auth, timeout=timeout)
+
+    # -- status / catalog ------------------------------------------------
+    async def status(self) -> EngineStatus:
+        try:
+            r = await self._client.get("/global/health")
+            r.raise_for_status()
+            version = r.json().get("version", "")
+            return EngineStatus(self.id, self.name, True, detail=f"{self._base} (v{version})")
+        except (httpx.HTTPError, ValueError) as exc:
+            return EngineStatus(self.id, self.name, False,
+                                reason=f"server not reachable at {self._base}: {exc}")
+
+    async def models(self) -> list[ModelInfo]:
+        r = await self._client.get("/provider")
+        r.raise_for_status()
+        data = r.json()
+        defaults: dict[str, str] = data.get("default", {})
+        connected = set(data.get("connected", []))
+        out: list[ModelInfo] = []
+        for provider in data.get("all", []):
+            pid = provider.get("id", "")
+            if connected and pid not in connected:
+                continue  # only show providers the local login can actually use
+            for mid, model in (provider.get("models") or {}).items():
+                label = model.get("name") or mid
+                out.append(ModelInfo(self.id, pid, mid, f"{provider.get('name', pid)} / {label}",
+                                     is_default=defaults.get(pid) == mid))
+        return out
+
+    # -- sessions ---------------------------------------------------------
+    async def create_session(self, title: str | None = None) -> str:
+        body: dict[str, Any] = {}
+        if title:
+            body["title"] = title
+        r = await self._client.post("/session", json=body)
+        r.raise_for_status()
+        return r.json()["id"]
+
+    async def send(self, session_id: str, text: str,
+                   provider_id: str | None = None, model_id: str | None = None) -> None:
+        body: dict[str, Any] = {"parts": [{"type": "text", "text": text}]}
+        if provider_id and model_id:
+            body["model"] = {"providerID": provider_id, "modelID": model_id}
+        r = await self._client.post(f"/session/{session_id}/prompt_async", json=body)
+        r.raise_for_status()
+
+    async def abort(self, session_id: str) -> None:
+        r = await self._client.post(f"/session/{session_id}/abort")
+        r.raise_for_status()
+
+    async def reply_permission(self, session_id: str, permission_id: str,
+                               response: str, remember: bool = False) -> None:
+        r = await self._client.post(
+            f"/session/{session_id}/permissions/{permission_id}",
+            json={"response": response, "remember": remember})
+        r.raise_for_status()
+
+    # -- artifacts ---------------------------------------------------------
+    async def session_diff(self, session_id: str) -> list[dict[str, Any]]:
+        r = await self._client.get(f"/session/{session_id}/diff")
+        r.raise_for_status()
+        return r.json()
+
+    async def file_content(self, path: str) -> str:
+        r = await self._client.get("/file/content", params={"path": path})
+        r.raise_for_status()
+        data = r.json()
+        return data.get("content", "") if isinstance(data, dict) else str(data)
+
+    # -- events -------------------------------------------------------------
+    async def events(self) -> AsyncIterator[EngineEvent]:
+        """Subscribe to the server SSE bus and normalize events."""
+        async with self._client.stream("GET", "/event") as r:
+            r.raise_for_status()
+            async for line in r.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                try:
+                    envelope = json.loads(line[5:].strip())
+                except json.JSONDecodeError:
+                    continue
+                payload = envelope.get("payload", envelope)
+                ev = self._normalize(payload)
+                if ev:
+                    yield ev
+
+    @staticmethod
+    def _normalize(payload: dict[str, Any]) -> EngineEvent | None:
+        etype = payload.get("type", "")
+        props = payload.get("properties", {})
+        if etype == "message.part.updated":
+            part = props.get("part", {})
+            if part.get("type") == "text":
+                delta = props.get("delta") or ""
+                return EngineEvent("text_delta", session_id=part.get("sessionID", ""), text=delta)
+        elif etype == "permission.asked":
+            return EngineEvent(
+                "permission_request",
+                session_id=props.get("sessionID", ""),
+                permission_id=props.get("id", ""),
+                action=props.get("permission", props.get("type", "action")),
+                detail=props)
+        elif etype == "session.idle":
+            return EngineEvent("message_done", session_id=props.get("sessionID", ""))
+        elif etype == "session.error":
+            return EngineEvent("error", session_id=props.get("sessionID", ""),
+                               text=json.dumps(props.get("error", props))[:500])
+        return None
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+
+class ManagedOpenCodeServer:
+    """Spawn and own a local `opencode serve` child process."""
+
+    def __init__(self, binary: str = "opencode", port: int = 4096, password: str = ""):
+        self.binary, self.port, self.password = binary, port, password
+        self.process: asyncio.subprocess.Process | None = None
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self.port}"
+
+    async def start(self) -> None:
+        import os
+        env = dict(os.environ)
+        if self.password:
+            env["OPENCODE_SERVER_PASSWORD"] = self.password
+        self.process = await asyncio.create_subprocess_exec(
+            self.binary, "serve", "--port", str(self.port), "--hostname", "127.0.0.1",
+            env=env, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+
+    async def wait_ready(self, timeout: float = 20.0) -> bool:
+        deadline = asyncio.get_event_loop().time() + timeout
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=2.0) as c:
+            while asyncio.get_event_loop().time() < deadline:
+                try:
+                    r = await c.get("/global/health")
+                    if r.status_code == 200:
+                        return True
+                except httpx.HTTPError:
+                    pass
+                await asyncio.sleep(0.5)
+        return False
+
+    async def stop(self) -> None:
+        if self.process and self.process.returncode is None:
+            self.process.terminate()
+            try:
+                await asyncio.wait_for(self.process.wait(), 5.0)
+            except asyncio.TimeoutError:
+                self.process.kill()

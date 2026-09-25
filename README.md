@@ -1,56 +1,108 @@
 # instinct_muse
 
-An open-source personal AI agent, inspired by the design Meta published for Muse.
-The agent runs in a sandbox. Credentials and network access are controlled from outside it.
+An open-source personal AI agent with a real UI, inspired by the design Meta published for
+Muse and by OpenMausBot's bring-your-own-agent model. You pick the agent engine and model per
+chat; the app detects agent CLIs already on your machine and rides their existing logins, so
+there is no API key to configure when your OpenCode CLI is signed in.
 
-> Not affiliated with Meta. The architecture here follows Meta's public safety write-up:
+> Not affiliated with Meta or xAI. Muse architecture reference:
 > https://research.meta.ai/blog/security-and-safety-for-ai-agents-our-approach-with-muse
 
 ## How it fits together
 
-| Muse (per Meta) | instinct_muse MVP |
+```
+Mac app (Tauri 2 + React)  -->  application service (FastAPI + SQLite)  -->  engine adapters
+                                     |                                    --> OpenCode server (local CLI login)
+                                     |                                    --> OpenCode Zen API (key, fallback)
+                                     |                                    --> Codex app server (planned)
+                                     +-- conversations, messages, Library,
+                                         approvals, goals, scheduling, event log
+```
+
+- **The engine runs its own tool loop.** The app service owns conversations, memory, goals,
+  approvals and scheduled work independently, so engines stay swappable.
+- **Detection, not configuration.** On startup the service probes PATH for known agent CLIs
+  (`opencode`, `codex`, `claude`). Detected engines light up in the picker; missing ones show
+  dimmed with the reason. If `opencode` is found, the service spawns `opencode serve` itself.
+- **Approvals in chat.** Engine permission requests (file writes, shell commands) become
+  inline Allow / Always / Deny cards. The credential broker and egress allowlist gate sit
+  behind them.
+- **Library.** Files the agent creates during a chat are captured into the Library screen
+  and persisted in SQLite.
+
+| Muse (per Meta) | instinct_muse |
 | --- | --- |
-| Per-user isolated Linux VM | One Docker Compose stack per user |
-| Hatch harness in a systemd-nspawn container | `sandbox/` container: no network, dropped capabilities, non-root |
+| Per-user isolated Linux VM | One Docker Compose stack per user (server deploy) |
+| Hatch harness | `sandbox/` container: no network, dropped capabilities, non-root |
 | hatch-authd surrogate tokens | `broker/token_broker.py` |
 | Sentinel egress gate | `broker/egress_proxy.py` (allowlist + just-in-time token swap) |
-| Chromium browser sub-agent on accessibility trees | `browser/worker.py` (Playwright) |
-| Postgres app state | Postgres + pgvector |
-| Muse Spark model | OpenCode Zen, swappable via `app/providers/` |
-| iOS / Android / web clients | Web chat over WebSocket (`/ws/chat`) |
+| Muse Spark model | Any engine: local OpenCode login, OpenCode Zen API, Codex (planned) |
+| iOS / Android / web clients | Mac app (Tauri + React), web UI over the same API |
 
-## Model: OpenCode Zen
+## Quick start (Mac, native - recommended)
 
-The default provider is [OpenCode Zen](https://opencode.ai/docs/zen/), OpenCode's model gateway.
-It uses the OpenAI-compatible `https://opencode.ai/zen/v1/chat/completions` endpoint with one API key.
-The default model is `big-pickle`, which is listed as free. Set `MODEL` to any Zen
-`/chat/completions` model id (for example `glm-5.3` or `kimi-k3`).
-
-## Quick start
+Requires Python 3.10+, Node 20+, and ideally the
+[OpenCode CLI](https://opencode.ai) installed and logged in.
 
 ```bash
-cp .env.example .env          # add OPENCODE_API_KEY
-docker compose up --build
-# chat: connect a WebSocket client to ws://localhost:8000/ws/chat
-```
-
-Local dev without Docker:
-
-```bash
-python -m venv .venv && source .venv/bin/activate
 pip install -e .[dev]
-pytest
+cd ui && npm install && npm run build && cd ..
 uvicorn app.main:app --reload
+# open http://127.0.0.1:8000  (serves the built UI)
 ```
 
-## Roadmap (4-week MVP)
+UI dev mode with hot reload:
 
-1. Gateway + chat: FastAPI, WebSocket, agent loop, OpenCode Zen provider
-2. Sandbox: shell tool runs only inside the locked-down container
-3. Browser worker: accessibility-tree snapshots, click/type actions
-4. Trust layer: route all sandbox egress through the gate, surrogate tokens for connectors
+```bash
+uvicorn app.main:app --reload        # terminal 1
+cd ui && npm run dev                 # terminal 2 -> http://127.0.0.1:5199
+```
 
-After the MVP: Telegram/WhatsApp channel, scheduled jobs and sub-agents, prompt-injection classifier.
+Desktop shell (once Rust is installed):
+
+```bash
+cd ui && npm install -D @tauri-apps/cli && npx tauri dev
+```
+
+## Quick start (server deploy)
+
+```bash
+cp .env.example .env          # set OPENCODE_API_KEY for the zen_api engine
+docker compose up --build
+```
+
+## First milestone
+
+One faithful chat screen -> OpenCode connection -> streamed answer -> approved file
+creation -> file appears in Library -> still there after restart.
+
+Verified so far: the app service, SQLite persistence, detection probes, the OpenCode
+adapter against the documented server API (mocked in tests), and the UI build.
+**Not yet verified against a live logged-in OpenCode CLI** - that needs a machine with
+OpenCode signed in (the event shapes in `app/engines/opencode_server.py` follow
+https://opencode.ai/docs/server/ and should be smoke-tested there first).
+
+## Tests
+
+```bash
+pytest          # storage, detection, adapter (mocked server), broker, agent loop
+```
+
+## Roadmap
+
+- Phase 0: OpenCode spike - verify streaming, auth, cancel/resume and approval events
+  against a live CLI; evaluate OpenPalm / PocketPaw for reuse ideas
+- Phase 1 (this branch): app service + SQLite, engine adapters, detection, React UI shell
+  (Chat / Feed / Ideas / Goals / Library), Tauri scaffold
+- Phase 2: memory, goals, durable scheduling, feed generation, connectors through the broker
+- Phase 3: Mac polish - quick chat shortcut, dictation, menu bar, signed + notarized installer
+- Phase 4: remote worker for jobs that run while the Mac is asleep
+
+## Credits
+
+- Architecture inspiration: [OpenMausBot](https://github.com/milind-soni/OpenMausBot)
+  (Apache-2.0) - independently written code, same driver-per-engine idea
+- Research brief: see RESEARCH.md history / the project's planning notes
 
 ## License
 
