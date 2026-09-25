@@ -15,7 +15,7 @@ jobs:
     steps:
       - name: Install OpenCode CLI
         run: |
-          curl -fsSL https://opencode.ai/install | bash
+          curl -fsSL https://opencode.ai/install | bash -s -- --version 1.18.32
           "$HOME/.opencode/bin/opencode" --version
       - name: Start server and list providers
         run: |
