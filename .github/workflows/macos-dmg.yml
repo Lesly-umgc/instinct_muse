@@ -25,24 +25,64 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ui/src-tauri
-      - name: Build Python service
+      - name: Build Python service (unpacked onedir)
         run: |
           python -m pip install --upgrade pip
           pip install . pyinstaller
           cd ui && npm ci && npm run build && cd ..
-          pyinstaller --onefile --clean --name muse-service --add-data 'ui/dist:ui/dist' --collect-all uvicorn --collect-all pydantic --collect-all pydantic_settings --collect-all fastapi --collect-all starlette app/desktop.py
-          mkdir -p ui/src-tauri/binaries
-          cp dist/muse-service ui/src-tauri/binaries/muse-service-aarch64-apple-darwin
-          chmod +x ui/src-tauri/binaries/muse-service-aarch64-apple-darwin
+          # Ship the service UNPACKED (--onedir), never --onefile. A onefile
+          # binary extracts Python.framework at runtime, and that extracted
+          # library keeps a signature whose Team ID differs from the ad-hoc
+          # signed app, so macOS kills it on launch:
+          # "mapping process and mapped file (non-platform) have different Team IDs".
+          pyinstaller --onedir --clean --name muse-service --add-data 'ui/dist:ui/dist' --collect-all uvicorn --collect-all pydantic --collect-all pydantic_settings --collect-all fastapi --collect-all starlette app/desktop.py
+          test -x dist/muse-service/muse-service
       - name: Build ad-hoc signed Mac app and DMG
         run: cd ui && npx tauri build --target aarch64-apple-darwin
+      - name: Repack app with service and sign everything in one pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Tauri removes the intermediate .app after wrapping the DMG, so take
+          # the app out of the DMG it just built.
+          dmg=(ui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg)
+          test "${#dmg[@]}" -eq 1
+          test -s "${dmg[0]}"
+          mount_dir="$RUNNER_TEMP/tauri-dmg"
+          mkdir -p "$mount_dir"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" "${dmg[0]}"
+          mkdir -p "$RUNNER_TEMP/repack"
+          app="$RUNNER_TEMP/repack/Instinct Muse.app"
+          cp -R "$mount_dir/Instinct Muse.app" "$app"
+          hdiutil detach "$mount_dir"
+          # Place the unpacked service inside the bundle, next to the shell.
+          cp -R dist/muse-service "$app/Contents/MacOS/muse-service"
+          # Sign inside out with one ad-hoc identity: every Mach-O in the
+          # service first, then the whole bundle. After this pass every mapped
+          # file shares the app's Team ID, so the runtime check passes.
+          find "$app/Contents/MacOS/muse-service" -type f \( -name '*.dylib' -o -name '*.so' -o -perm +111 \) -print0 |
+          while IFS= read -r -d '' f; do
+            if file -b "$f" | grep -q 'Mach-O'; then
+              codesign --force --sign - "$f"
+            fi
+          done
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          # Build the final DMG from the fully re-signed app.
+          version="$(python3 -c 'import json;print(json.load(open("ui/src-tauri/tauri.conf.json"))["version"])')"
+          final_root="$RUNNER_TEMP/final-dmg"
+          mkdir -p "$final_root"
+          cp -R "$app" "$final_root/"
+          ln -s /Applications "$final_root/Applications"
+          mkdir -p dist/release
+          hdiutil create -volname "Instinct Muse" -srcfolder "$final_root" -ov -format UDZO "dist/release/Instinct Muse_${version}_aarch64.dmg"
+          ls -lh dist/release/
       - name: Smoke test installed app payload before publishing
         shell: bash
         run: |
           set -euo pipefail
-          # Tauri removes the intermediate .app after bundling. Mount the DMG
-          # and test precisely what the user will install.
-          dmg=(ui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg)
+          # Mount the final re-signed DMG and test exactly what the user installs.
+          dmg=(dist/release/*.dmg)
           test "${#dmg[@]}" -eq 1
           test -s "${dmg[0]}"
           mount_dir="$RUNNER_TEMP/muse-mounted"
@@ -51,12 +91,12 @@ jobs:
           app="$RUNNER_TEMP/Instinct Muse.app"
           cp -R "$mount_dir/Instinct Muse.app" "$app"
           hdiutil detach "$mount_dir"
-          sidecar="$app/Contents/MacOS/muse-service"
-          ls -la "$app/Contents/MacOS"
+          sidecar="$app/Contents/MacOS/muse-service/muse-service"
+          ls -la "$app/Contents/MacOS" "$app/Contents/MacOS/muse-service"
           test -x "$sidecar"
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign --verify --strict --verbose=2 "$sidecar"
-          # Test the actual signed sidecar inside the built .app, not a source/dev server.
+          # Test the actual signed service inside the built .app, not a source/dev server.
           "$sidecar" > /tmp/muse-smoke.log 2>&1 &
           service_pid=$!
           trap 'kill "$service_pid" 2>/dev/null || true; cat /tmp/muse-smoke.log' EXIT
@@ -70,8 +110,6 @@ jobs:
             sleep 1
           done
           curl --fail --silent http://127.0.0.1:18764/health | grep -q '"system":"instinct_muse"'
-          ls -lh ui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/
-          for dmg in ui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg; do test -s "$dmg"; done
           kill "$service_pid" 2>/dev/null || true
           wait "$service_pid" 2>/dev/null || true
           # Also launch the packaged shell so missing permissions/sidecar paths
@@ -93,6 +131,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create v0.1.1-mac ui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg \
-            --title 'Instinct Muse v0.1.1 Mac (ad-hoc signed)' --prerelease \
-            --notes 'Apple Silicon only. Ad-hoc signed, not notarized: right-click Open or allow in Privacy & Security on first launch. Bundled service verified from packaged app. OpenCode must be installed and logged in for local chat.'
+          gh release create v0.1.2-mac dist/release/*.dmg \
+            --title 'Instinct Muse v0.1.2 Mac (ad-hoc signed)' --prerelease \
+            --notes 'Apple Silicon only. Ad-hoc signed, not notarized: right-click Open or allow in Privacy & Security on first launch. Fixes the bundled service crashing on launch (PyInstaller onefile Team ID mismatch): the service now ships unpacked and the whole app is signed in one pass. Bundled service verified from the packaged app. OpenCode must be installed and logged in for local chat.'
