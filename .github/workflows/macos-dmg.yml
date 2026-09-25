@@ -40,7 +40,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          app="ui/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Instinct Muse.app"
+          # Tauri removes the intermediate .app after bundling. Mount the DMG
+          # and test precisely what the user will install.
+          dmg=(ui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg)
+          test "${#dmg[@]}" -eq 1
+          test -s "${dmg[0]}"
+          mount_dir="$RUNNER_TEMP/muse-mounted"
+          mkdir -p "$mount_dir"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" "${dmg[0]}"
+          app="$RUNNER_TEMP/Instinct Muse.app"
+          cp -R "$mount_dir/Instinct Muse.app" "$app"
+          hdiutil detach "$mount_dir"
           sidecar="$app/Contents/MacOS/muse-service"
           ls -la "$app/Contents/MacOS"
           test -x "$sidecar"
