@@ -15,7 +15,7 @@ interface LocalMessage {
 
 const MAIN_CHAT_KEY = "muse.mainChatId";
 
-export default function ChatScreen({ initialChatId }: { initialChatId?: string }) {
+export default function ChatScreen({ initialChatId, forceError }: { initialChatId?: string; forceError?: string }) {
   const [engines, setEngines] = useState<EngineStatus[]>([]);
   const [engine, setEngine] = useState<string>("");
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -93,6 +93,9 @@ export default function ChatScreen({ initialChatId }: { initialChatId?: string }
 
   const openConversationRef = useRef((conv: Conversation) => { void conv; });
   const initialChatDone = useRef(false);
+  useEffect(() => {
+    if (forceError) setError("Cannot reach app service at http://127.0.0.1:18764. Check ~/.instinct_muse/desktop.log and ~/.instinct_muse/service.log. (simulated)");
+  }, [forceError]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [showInvite, setShowInvite] = useState(false);
   const [copied, setCopied] = useState(false);

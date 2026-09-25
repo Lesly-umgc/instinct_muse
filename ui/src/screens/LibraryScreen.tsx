@@ -12,7 +12,7 @@ const KIND_LABEL: Record<string, string> = {
   podcast: "Podcast", file: "File",
 };
 
-export default function LibraryScreen() {
+export default function LibraryScreen({ initialArtifactId }: { initialArtifactId?: string }) {
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [category, setCategory] = useState<string>("all");
   const [filter, setFilter] = useState("");
@@ -20,8 +20,14 @@ export default function LibraryScreen() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api.artifacts().then((r) => setArtifacts(r.artifacts)).catch((e) => setError(String(e)));
-  }, []);
+    api.artifacts().then((r) => {
+      setArtifacts(r.artifacts);
+      if (initialArtifactId) {
+        const a = r.artifacts.find((x) => x.id === initialArtifactId) ?? r.artifacts[0];
+        if (a) api.artifact(a.id).then(setSelected).catch(() => {});
+      }
+    }).catch((e) => setError(String(e)));
+  }, [initialArtifactId]);
 
   const inCategory = (a: Artifact) => {
     if (category === "all") return true;

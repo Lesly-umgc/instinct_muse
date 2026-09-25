@@ -11,8 +11,8 @@ const KIND_ICON: Record<string, () => JSX.Element> = {
   idea: IdeasIcon,
 };
 
-export default function SearchScreen() {
-  const [q, setQ] = useState("");
+export default function SearchScreen({ initialQuery }: { initialQuery?: string }) {
+  const [q, setQ] = useState(initialQuery ?? "");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searched, setSearched] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);

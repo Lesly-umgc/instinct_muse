@@ -27,6 +27,7 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("chat");
   const [initialChat, setInitialChat] = useState("");
   const [settingsSection, setSettingsSection] = useState("");
+  const [deep, setDeep] = useState<{ goal: string; artifact: string; search: string; forceError: string }>({ goal: "", artifact: "", search: "", forceError: "" });
   useEffect(() => {
     const order: Screen[] = ["chat", "search", "feed", "ideas", "goals", "library"];
     const onKey = (e: KeyboardEvent) => {
@@ -47,6 +48,10 @@ export default function App() {
       if (valid.includes(c.initial_screen as Screen)) setScreen(c.initial_screen as Screen);
       if (c.initial_chat) setInitialChat(c.initial_chat);
       if (c.initial_settings_section) setSettingsSection(c.initial_settings_section);
+      setDeep({
+        goal: c.initial_goal ?? "", artifact: c.initial_artifact ?? "",
+        search: c.initial_search ?? "", forceError: c.force_error ?? "",
+      });
     }).catch(() => {});
   }, []);
   return (
@@ -75,12 +80,12 @@ export default function App() {
           <MenuIcon />
         </button>
       </nav>
-      {screen === "chat" && <ChatScreen initialChatId={initialChat} />}
-      {screen === "search" && <SearchScreen />}
+      {screen === "chat" && <ChatScreen initialChatId={initialChat} forceError={deep.forceError} />}
+      {screen === "search" && <SearchScreen initialQuery={deep.search} />}
       {screen === "feed" && <FeedScreen />}
       {screen === "ideas" && <IdeasScreen />}
-      {screen === "goals" && <GoalsScreen />}
-      {screen === "library" && <LibraryScreen />}
+      {screen === "goals" && <GoalsScreen initialGoalId={deep.goal} />}
+      {screen === "library" && <LibraryScreen initialArtifactId={deep.artifact} />}
       {screen === "settings" && <SettingsScreen initialSection={settingsSection} />}
     </div>
   );

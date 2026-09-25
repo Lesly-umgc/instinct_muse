@@ -320,6 +320,10 @@ def get_config():
         "initial_screen": os.environ.get("MUSE_INITIAL_SCREEN", ""),
         "initial_chat": os.environ.get("MUSE_INITIAL_CHAT", ""),
         "initial_settings_section": os.environ.get("MUSE_SETTINGS_SECTION", ""),
+        "initial_goal": os.environ.get("MUSE_INITIAL_GOAL", ""),
+        "initial_artifact": os.environ.get("MUSE_INITIAL_ARTIFACT", ""),
+        "initial_search": os.environ.get("MUSE_INITIAL_SEARCH", ""),
+        "force_error": os.environ.get("MUSE_FORCE_ERROR", ""),
         "version": settings.app_version,
         "data_dir": str(Path.home() / ".instinct_muse"),
     }

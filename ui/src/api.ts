@@ -51,7 +51,7 @@ export const api = {
       body: JSON.stringify({ decision }),
     }),
 
-  config: () => req<{ initial_screen: string; initial_chat?: string; initial_settings_section?: string; version?: string; data_dir?: string }>("/api/config"),
+  config: () => req<{ initial_screen: string; initial_chat?: string; initial_settings_section?: string; initial_goal?: string; initial_artifact?: string; initial_search?: string; force_error?: string; version?: string; data_dir?: string }>("/api/config"),
   allApprovals: () => req<{ approvals: Approval[] }>("/api/approvals"),
   uploadAttachment: (name: string, dataB64: string) =>
     req<{ path: string }>("/api/attachments", { method: "POST", body: JSON.stringify({ name, data_b64: dataB64 }) }),

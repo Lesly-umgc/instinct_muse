@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { Goal } from "../types";
 import AgentAvatar from "../components/AgentAvatar";
@@ -8,7 +8,7 @@ import {
 
 const CATEGORIES = ["Health", "Relationships", "Finance", "Career", "Learning", "Other"];
 
-export default function GoalsScreen() {
+export default function GoalsScreen({ initialGoalId }: { initialGoalId?: string }) {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [creating, setCreating] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
@@ -20,6 +20,13 @@ export default function GoalsScreen() {
     api.goals().then((r) => setGoals(r.goals)).catch((e) => setError(String(e)));
   }, []);
   useEffect(load, [load]);
+  const initialGoalDone = useRef(false);
+  useEffect(() => {
+    if (!initialGoalId || initialGoalDone.current || goals.length === 0) return;
+    const g = goals.find((x) => x.id === initialGoalId) ?? goals[0];
+    initialGoalDone.current = true;
+    setDetail(g);
+  }, [initialGoalId, goals]);
 
   const tracking = goals.filter((g) => g.group_name === "Tracking");
   const plain = goals.filter((g) => g.group_name !== "Tracking");
