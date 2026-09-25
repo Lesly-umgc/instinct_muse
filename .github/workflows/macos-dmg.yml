@@ -134,6 +134,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create v0.1.5-mac dist/release/*.dmg \
-            --title 'Instinct Muse v0.1.5 Mac (ad-hoc signed)' --prerelease \
-            --notes 'Apple Silicon only. Ad-hoc signed, not notarized: right-click Open or allow in Privacy & Security on first launch. Fixes chat deletion failing with "Cannot reach app service": the service only allowed GET/POST cross-origin, so the app window blocked DELETE before it could be sent. OpenCode must be installed and logged in for local chat.'
+          version="$(python3 -c 'import json;print(json.load(open("ui/src-tauri/tauri.conf.json"))["version"])')"
+          tag="v${version}-mac"
+          gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$tag" dist/release/*.dmg \
+            --title "Instinct Muse v${version} Mac (ad-hoc signed)" --prerelease \
+            --notes 'Apple Silicon only. Ad-hoc signed, not notarized: right-click Open or allow in Privacy & Security on first launch. Full Muse clone: chat with streaming, Feed, Ideas, Goals, Library, global search, 12-section Settings, keyboard shortcuts, file attachments. Chats run locally through OpenCode (install it and log in, or the free built-in model is used when available).'
