@@ -1,0 +1,136 @@
+name: e2e
+# Real end-to-end test of the installed app on a Mac runner: build the DMG,
+# install it like a user, install OpenCode, launch the app, and drive real
+# chats through the app's own API + websocket. No user testing required.
+on:
+  workflow_dispatch:
+  push:
+    branches: [e2e-harness]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ui/src-tauri
+      - name: Build Python service (unpacked onedir)
+        run: |
+          python -m pip install --upgrade pip
+          pip install . pyinstaller
+          cd ui && npm ci && npm run build && cd ..
+          pyinstaller --onedir --clean --name muse-service --add-data 'ui/dist:ui/dist' --collect-all uvicorn --collect-all pydantic --collect-all pydantic_settings --collect-all fastapi --collect-all starlette app/desktop.py
+          test -x dist/muse-service/muse-service
+      - name: Build ad-hoc signed Mac app and DMG
+        run: cd ui && npx tauri build --target aarch64-apple-darwin
+      - name: Repack app with service and sign everything in one pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg=(ui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg)
+          test "${#dmg[@]}" -eq 1
+          mount_dir="$RUNNER_TEMP/tauri-dmg"
+          mkdir -p "$mount_dir"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" "${dmg[0]}"
+          mkdir -p "$RUNNER_TEMP/repack"
+          app="$RUNNER_TEMP/repack/Instinct Muse.app"
+          cp -R "$mount_dir/Instinct Muse.app" "$app"
+          hdiutil detach "$mount_dir"
+          cp -R dist/muse-service "$app/Contents/Resources/muse-service"
+          find "$app/Contents/Resources/muse-service" -type f \( -name '*.dylib' -o -name '*.so' -o -perm +111 \) -print0 |
+          while IFS= read -r -d '' f; do
+            if file -b "$f" | grep -q 'Mach-O'; then
+              codesign --force --sign - "$f"
+            fi
+          done
+          codesign --force --sign - "$app"
+          codesign --verify --strict --verbose=2 "$app"
+          version="$(python3 -c 'import json;print(json.load(open("ui/src-tauri/tauri.conf.json"))["version"])')"
+          final_root="$RUNNER_TEMP/final-dmg"
+          mkdir -p "$final_root"
+          cp -R "$app" "$final_root/"
+          ln -s /Applications "$final_root/Applications"
+          mkdir -p dist/release
+          hdiutil create -volname "Instinct Muse" -srcfolder "$final_root" -ov -format UDZO "dist/release/Instinct Muse_${version}_aarch64.dmg"
+          ls -lh dist/release/
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: muse-dmg
+          path: dist/release/*.dmg
+          retention-days: 3
+  test:
+    needs: build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: muse-dmg
+          path: /tmp/muse-dmg
+      - name: Install OpenCode CLI
+        run: |
+          curl -fsSL https://opencode.ai/install | bash
+          "$HOME/.opencode/bin/opencode" --version
+      - name: Install the app like a user
+        run: |
+          set -euo pipefail
+          dmg=(/tmp/muse-dmg/*.dmg)
+          test "${#dmg[@]}" -eq 1
+          mount_dir="$RUNNER_TEMP/muse-mounted"
+          mkdir -p "$mount_dir"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" "${dmg[0]}"
+          cp -R "$mount_dir/Instinct Muse.app" "$HOME/Applications/" 2>/dev/null || { mkdir -p "$HOME/Applications"; cp -R "$mount_dir/Instinct Muse.app" "$HOME/Applications/"; }
+          hdiutil detach "$mount_dir"
+          xattr -dr com.apple.quarantine "$HOME/Applications/Instinct Muse.app" 2>/dev/null || true
+          ls "$HOME/Applications/Instinct Muse.app/Contents/MacOS"
+      - name: Driver dependencies
+        run: python3 -m pip install websockets
+      - name: Launch app and wait for service
+        run: |
+          open -a "$HOME/Applications/Instinct Muse.app"
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:18764/health && break || sleep 2
+          done
+          curl -sf http://127.0.0.1:18764/health | grep -q instinct_muse
+      - name: E2E main stage (chat, title, artifact, delete, CORS)
+        run: python3 e2e/driver.py --stage main
+      - name: Screenshot after chat
+        run: |
+          mkdir -p /tmp/shots
+          screencapture -x /tmp/shots/01-after-chat.png || echo 'screencapture failed'
+      - name: Restart stage - arm, kill, relaunch
+        run: |
+          python3 e2e/driver.py --stage arm-restart
+          (sleep 1; pkill -f 'Instinct Muse' || true; pkill -f muse-service || true) &
+          sleep 4
+          pgrep -fl 'muse-service' || echo 'service down as expected'
+          open -a "$HOME/Applications/Instinct Muse.app"
+          sleep 3
+      - name: E2E post-restart stage
+        run: python3 e2e/driver.py --stage post-restart
+      - name: Final screenshot
+        if: always()
+        run: screencapture -x /tmp/shots/02-final.png || echo 'screencapture failed'
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-evidence
+          path: |
+            /tmp/shots/
+            ~/.instinct_muse/*.log
+          retention-days: 7
