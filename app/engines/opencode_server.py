@@ -186,12 +186,19 @@ class ManagedOpenCodeServer:
 
     async def start(self) -> None:
         import os
+        from pathlib import Path
         env = dict(os.environ)
         if self.password:
             env["OPENCODE_SERVER_PASSWORD"] = self.password
+        # Give the agent a real, writable working directory. Inheriting the
+        # app's own CWD can land sessions at "/" or inside the read-only app
+        # bundle, where every file creation fails.
+        workspace = Path.home() / ".instinct_muse" / "workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
         self.process = await asyncio.create_subprocess_exec(
             self.binary, "serve", "--port", str(self.port), "--hostname", "127.0.0.1",
-            env=env, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            env=env, cwd=workspace,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
 
     async def wait_ready(self, timeout: float = 20.0) -> bool:
         deadline = asyncio.get_event_loop().time() + timeout
