@@ -55,19 +55,22 @@ jobs:
           app="$RUNNER_TEMP/repack/Instinct Muse.app"
           cp -R "$mount_dir/Instinct Muse.app" "$app"
           hdiutil detach "$mount_dir"
-          # Place the unpacked service inside the bundle, next to the shell.
-          cp -R dist/muse-service "$app/Contents/MacOS/muse-service"
+          # Place the unpacked service in Resources. Contents/MacOS only
+          # accepts code bundles (the onedir payload has dist-info data dirs,
+          # which make codesign fail with "bundle format unrecognized"), while
+          # Resources content is sealed as data.
+          cp -R dist/muse-service "$app/Contents/Resources/muse-service"
           # Sign inside out with one ad-hoc identity: every Mach-O in the
           # service first, then the whole bundle. After this pass every mapped
           # file shares the app's Team ID, so the runtime check passes.
-          find "$app/Contents/MacOS/muse-service" -type f \( -name '*.dylib' -o -name '*.so' -o -perm +111 \) -print0 |
+          find "$app/Contents/Resources/muse-service" -type f \( -name '*.dylib' -o -name '*.so' -o -perm +111 \) -print0 |
           while IFS= read -r -d '' f; do
             if file -b "$f" | grep -q 'Mach-O'; then
               codesign --force --sign - "$f"
             fi
           done
-          codesign --force --deep --sign - "$app"
-          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign --force --sign - "$app"
+          codesign --verify --strict --verbose=2 "$app"
           # Build the final DMG from the fully re-signed app.
           version="$(python3 -c 'import json;print(json.load(open("ui/src-tauri/tauri.conf.json"))["version"])')"
           final_root="$RUNNER_TEMP/final-dmg"
@@ -91,8 +94,8 @@ jobs:
           app="$RUNNER_TEMP/Instinct Muse.app"
           cp -R "$mount_dir/Instinct Muse.app" "$app"
           hdiutil detach "$mount_dir"
-          sidecar="$app/Contents/MacOS/muse-service/muse-service"
-          ls -la "$app/Contents/MacOS" "$app/Contents/MacOS/muse-service"
+          sidecar="$app/Contents/Resources/muse-service/muse-service"
+          ls -la "$app/Contents/MacOS" "$app/Contents/Resources/muse-service"
           test -x "$sidecar"
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign --verify --strict --verbose=2 "$sidecar"

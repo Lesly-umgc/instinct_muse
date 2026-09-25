@@ -21,12 +21,18 @@ fn log_line(path: &PathBuf, line: &str) {
     }
 }
 
-/// The service ships unpacked (PyInstaller onedir) next to the app executable
-/// so every Mach-O in the bundle is signed with the same identity.
+/// The service ships unpacked (PyInstaller onedir) in the bundle's Resources
+/// so every Mach-O in the bundle is signed with the same identity. Code
+/// signing only accepts bundles under Contents/MacOS, so the mostly-data
+/// onedir payload must live in Resources.
 fn service_exe() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?; // Contents/MacOS
-    let candidate = dir.join("muse-service").join("muse-service");
+    let candidate = dir
+        .parent()? // Contents
+        .join("Resources")
+        .join("muse-service")
+        .join("muse-service");
     candidate.is_file().then_some(candidate)
 }
 
