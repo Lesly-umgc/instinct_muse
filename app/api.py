@@ -255,6 +255,13 @@ class ApprovalDecision(BaseModel):
     decision: str  # allow | always | deny
 
 
+@router.get("/config")
+def get_config():
+    import os
+
+    return {"initial_screen": os.environ.get("MUSE_INITIAL_SCREEN", "")}
+
+
 @router.get("/engines")
 async def list_engines() -> dict:
     out = []

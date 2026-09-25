@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Screen } from "./types";
+import { api } from "./api";
 import ChatScreen from "./screens/ChatScreen";
 import FeedScreen from "./screens/FeedScreen";
 import IdeasScreen from "./screens/IdeasScreen";
@@ -23,6 +24,12 @@ const NAV: { id: Screen; label: string; Icon: () => JSX.Element }[] = [
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("chat");
+  useEffect(() => {
+    api.config().then((c) => {
+      const valid: Screen[] = ["chat", "search", "feed", "ideas", "goals", "library"];
+      if (valid.includes(c.initial_screen as Screen)) setScreen(c.initial_screen as Screen);
+    }).catch(() => {});
+  }, []);
   return (
     <div className="app">
       <nav className="rail" aria-label="Main navigation">

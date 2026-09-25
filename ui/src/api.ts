@@ -51,6 +51,7 @@ export const api = {
       body: JSON.stringify({ decision }),
     }),
 
+  config: () => req<{ initial_screen: string }>("/api/config"),
   goals: () => req<{ goals: Goal[] }>("/api/goals"),
   createGoal: (title: string, category: string) =>
     req<Goal>("/api/goals", {

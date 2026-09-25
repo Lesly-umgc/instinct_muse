@@ -130,6 +130,20 @@ jobs:
       - name: Final screenshot
         if: always()
         run: screencapture -x /tmp/shots/02-final.png || echo 'screencapture failed'
+      - name: Screenshot every UI screen
+        if: always()
+        run: |
+          mkdir -p /tmp/shots
+          bin="$HOME/Applications/Instinct Muse.app/Contents/MacOS/instinct-muse"
+          for scr in chat feed ideas goals library search; do
+            pkill -f 'Instinct Muse' || true
+            pkill -f muse-service || true
+            sleep 2
+            MUSE_INITIAL_SCREEN=$scr "$bin" >/dev/null 2>&1 &
+            sleep 8
+            screencapture -x "/tmp/shots/ui-$scr.png" || echo "screencapture $scr failed"
+          done
+          pkill -f 'Instinct Muse' || true
       - name: Upload screenshots and logs
         if: always()
         uses: actions/upload-artifact@v4
