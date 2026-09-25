@@ -346,6 +346,7 @@ body { margin: 0; background: var(--bg); color: var(--text); }
   text-align: center; color: var(--text-dim); font-size: 12px; margin: 16px 0 8px;
 }
 .card {
+  position: relative;
   padding: 14px 18px; border-radius: 14px; font-size: 15px; line-height: 1.55;
   white-space: pre-wrap; word-break: break-word;
 }
@@ -425,6 +426,22 @@ body { margin: 0; background: var(--bg); color: var(--text); }
   0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
   30% { transform: translateY(-4px); opacity: 1; }
 }
+.msg-copy {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  color: #ddd;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.card:hover .msg-copy { opacity: 1; }
+.msg-copy:hover { background: rgba(255, 255, 255, 0.22); }
 .stream-cursor {
   display: inline-block; width: 8px; height: 15px; margin-left: 3px;
   background: currentColor; vertical-align: text-bottom;

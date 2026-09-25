@@ -382,6 +382,15 @@ export default function ChatScreen({ initialChatId }: { initialChatId?: string }
                   <div className={`card ${m.role} ${m.streaming ? "streaming" : ""}`}>
                     {m.content}
                     {m.streaming && <span className="stream-cursor" aria-hidden="true" />}
+                    {!m.streaming && m.role === "assistant" && m.content && (
+                      <button className="msg-copy" aria-label="Copy"
+                        onClick={(e) => {
+                          navigator.clipboard?.writeText(m.content).catch(() => {});
+                          const b = e.currentTarget;
+                          b.textContent = "Copied";
+                          setTimeout(() => { b.textContent = "Copy"; }, 1200);
+                        }}>Copy</button>
+                    )}
                   </div>
                 </div>
               );
