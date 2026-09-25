@@ -3,14 +3,24 @@ import { api, serviceOrigin } from "../api";
 import type { Approval, EngineStatus } from "../types";
 import AgentAvatar from "../components/AgentAvatar";
 
-type Section = "general" | "agent" | "permissions" | "data" | "about";
+type Section =
+  | "general" | "connectors" | "filesystem" | "dictation" | "wallet"
+  | "securestore" | "permissions" | "messaging" | "devices" | "data"
+  | "help" | "legal";
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: "general", label: "General" },
-  { id: "agent", label: "Agent" },
+  { id: "connectors", label: "Connectors" },
+  { id: "filesystem", label: "File system" },
+  { id: "dictation", label: "Dictation" },
+  { id: "wallet", label: "Wallet" },
+  { id: "securestore", label: "Secure Store" },
   { id: "permissions", label: "Permissions" },
+  { id: "messaging", label: "Messaging" },
+  { id: "devices", label: "Devices" },
   { id: "data", label: "Data controls" },
-  { id: "about", label: "About" },
+  { id: "help", label: "Help" },
+  { id: "legal", label: "Legal" },
 ];
 
 export default function SettingsScreen() {
@@ -81,6 +91,14 @@ export default function SettingsScreen() {
               <div className="settings-card">
                 <div className="settings-row">
                   <div className="settings-row-text">
+                    <h3>Keyboard shortcuts</h3>
+                    <p>Cmd+K search - Cmd+1..6 switch screens - Cmd+, settings</p>
+                  </div>
+                </div>
+              </div>
+              <div className="settings-card">
+                <div className="settings-row">
+                  <div className="settings-row-text">
                     <h3>Version</h3>
                     <p>{config.version ?? "..."} - service at {serviceOrigin}</p>
                   </div>
@@ -94,7 +112,7 @@ export default function SettingsScreen() {
               </div>
             </>
           )}
-          {section === "agent" && (
+          {section === "connectors" && (
             <div className="settings-card">
               {engines.map((e) => (
                 <div className="settings-row" key={e.id}>
@@ -109,6 +127,53 @@ export default function SettingsScreen() {
               {engines.length === 0 && <p className="dim">No agents detected. Install OpenCode to give Muse a brain.</p>}
             </div>
           )}
+          {section === "filesystem" && (
+            <div className="settings-card">
+              <div className="settings-row">
+                <div className="settings-row-text">
+                  <h3>Agent workspace</h3>
+                  <p>{config.data_dir ? `${config.data_dir}/workspace` : "..."}</p>
+                </div>
+              </div>
+              <div className="settings-row">
+                <div className="settings-row-text">
+                  <h3>Least-privilege access</h3>
+                  <p>Muse's agent reads and writes inside its own workspace folder only. It does not get Full Disk Access.</p>
+                </div>
+              </div>
+            </div>
+          )}
+          {section === "dictation" && (
+            <div className="settings-card">
+              <div className="settings-row">
+                <div className="settings-row-text">
+                  <h3>Dictation</h3>
+                  <p>Uses macOS system dictation. Press the mic key (or Fn twice) while the composer is focused. Enable it in System Settings - Keyboard - Dictation.</p>
+                </div>
+              </div>
+            </div>
+          )}
+          {section === "wallet" && (
+            <div className="settings-card">
+              <div className="settings-row">
+                <div className="settings-row-text">
+                  <h3>Wallet</h3>
+                  <p>Payments are coming soon. Muse will never spend money without your approval first.</p>
+                </div>
+                <span className="dim">Coming soon</span>
+              </div>
+            </div>
+          )}
+          {section === "securestore" && (
+            <div className="settings-card">
+              <div className="settings-row">
+                <div className="settings-row-text">
+                  <h3>No saved logins</h3>
+                  <p>Website logins you save will live here, stored only on this Mac and kept separate from the agent runtime.</p>
+                </div>
+              </div>
+            </div>
+          )}
           {section === "permissions" && (
             <div className="settings-card">
               {approvals.length === 0 && <p className="dim">No approvals yet. When Muse asks to run an action, your choice is remembered here.</p>}
@@ -120,6 +185,28 @@ export default function SettingsScreen() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+          {section === "messaging" && (
+            <div className="settings-card">
+              <div className="settings-row">
+                <div className="settings-row-text">
+                  <h3>WhatsApp</h3>
+                  <p>Not connected. Messaging channels are coming soon.</p>
+                </div>
+                <span className="dim">Coming soon</span>
+              </div>
+            </div>
+          )}
+          {section === "devices" && (
+            <div className="settings-card">
+              <div className="settings-row">
+                <div className="settings-row-text">
+                  <h3>This Mac</h3>
+                  <p>Current device. Instinct Muse runs entirely on this machine.</p>
+                </div>
+                <span className="status-dot on" />
+              </div>
             </div>
           )}
           {section === "data" && (
@@ -144,18 +231,35 @@ export default function SettingsScreen() {
               </div>
             </>
           )}
-          {section === "about" && (
+          {section === "help" && (
             <div className="settings-card">
               <div className="settings-row">
                 <div className="settings-row-text">
-                  <h3>Instinct Muse</h3>
-                  <p>A personal Muse that chats, remembers, makes artefacts and works toward your goals. Runs locally with your own agent.</p>
+                  <h3>Report a problem</h3>
+                  <p>Open an issue on the project tracker with what you did and what happened.</p>
+                </div>
+                <button className="pill-btn" onClick={() => window.open("https://github.com/Lesly-umgc/instinct_muse/issues", "_blank")}>Open issues</button>
+              </div>
+              <div className="settings-row">
+                <div className="settings-row-text">
+                  <h3>Logs</h3>
+                  <p>{config.data_dir ? `${config.data_dir}/service.log and desktop.log` : "..."}</p>
                 </div>
               </div>
+            </div>
+          )}
+          {section === "legal" && (
+            <div className="settings-card">
               <div className="settings-row">
                 <div className="settings-row-text">
                   <h3>Responses come from an AI model</h3>
                   <p>They can be wrong. Check anything that matters.</p>
+                </div>
+              </div>
+              <div className="settings-row">
+                <div className="settings-row-text">
+                  <h3>Instinct Muse</h3>
+                  <p>An independent open-source project. Not affiliated with Meta or the Muse product. Your data stays on this Mac.</p>
                 </div>
               </div>
             </div>
