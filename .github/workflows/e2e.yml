@@ -146,7 +146,7 @@ jobs:
           mkdir -p /tmp/shots
           bin="$HOME/Applications/Instinct Muse.app/Contents/MacOS/instinct-muse"
           # showcase conversation with a real reply for the chat screenshot
-          cid=$(curl -sf -X POST http://127.0.0.1:18764/api/conversations -H 'Content-Type: application/json' -d '{"title":"Weekend plans","kind":"side"}' | /tmp/e2e-venv/bin/python -c 'import sys,json; print(json.load(sys.stdin)["id"])' 2>/dev/null || true)
+          cid=$(curl -sf -X POST http://127.0.0.1:18764/api/conversations -H 'Content-Type: application/json' -d '{"title":"Weekend plans","engine":"opencode_server","model":"opencode/muse-spark-1.3-contributor-free"}' | /tmp/e2e-venv/bin/python -c 'import sys,json; print(json.load(sys.stdin)["id"])' 2>/dev/null || true)
           if [ -n "$cid" ]; then
             /tmp/e2e-venv/bin/python - "$cid" <<'PYEOF' || true
           import asyncio, sys
