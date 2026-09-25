@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>instinct_muse - open-source personal AI agent</title>
+<meta name="description" content="An open-source personal AI agent inspired by Meta's Muse design: sandboxed agent, credential broker, egress gate, browser worker.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <p class="tag">Open source · Apache-2.0</p>
+    <h1>instinct_muse</h1>
+    <p class="lead">A personal AI agent you can run yourself. The agent works inside a sandbox. Your credentials and network access stay outside it.</p>
+    <p class="cta"><a class="btn" href="https://github.com/Lesly-umgc/instinct_muse">View on GitHub</a> <a class="btn ghost" href="#quickstart">Quick start</a></p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section>
+    <h2>How it works</h2>
+    <div class="grid">
+      <div class="card"><h3>Gateway</h3><p>FastAPI app with web chat over WebSocket. Runs the agent loop and keeps state in Postgres.</p></div>
+      <div class="card"><h3>Sandbox</h3><p>Code the agent runs goes into a locked-down container: non-root, no capabilities, no direct internet.</p></div>
+      <div class="card"><h3>Credential broker</h3><p>The agent only sees surrogate tokens. Real OAuth tokens never enter the sandbox.</p></div>
+      <div class="card"><h3>Egress gate</h3><p>Every outbound request is checked against an allowlist. Real tokens are swapped in at the last step.</p></div>
+      <div class="card"><h3>Browser worker</h3><p>Headless Chromium through Playwright. The agent reads accessibility-tree snapshots, not raw HTML.</p></div>
+      <div class="card"><h3>Model</h3><p>OpenCode Zen by default, behind a small provider interface so you can swap models.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Mapped from Meta's Muse design</h2>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Muse (per Meta)</th><th>instinct_muse</th></tr></thead>
+      <tbody>
+        <tr><td>Per-user isolated Linux VM</td><td>One Docker Compose stack per user</td></tr>
+        <tr><td>Harness in a systemd-nspawn container</td><td>Sandbox container with dropped capabilities</td></tr>
+        <tr><td>Surrogate OAuth tokens</td><td>Token broker</td></tr>
+        <tr><td>Sentinel egress gate</td><td>Allowlist proxy with token swap</td></tr>
+        <tr><td>Chromium sub-agent on accessibility trees</td><td>Playwright browser worker</td></tr>
+        <tr><td>Muse Spark model</td><td>OpenCode Zen (swappable)</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="note">Not affiliated with Meta. Based on Meta's public write-up: <a href="https://research.meta.ai/blog/security-and-safety-for-ai-agents-our-approach-with-muse">Security and safety for AI agents</a>.</p>
+  </section>
+
+  <section id="quickstart">
+    <h2>Quick start</h2>
+<pre><code>git clone https://github.com/Lesly-umgc/instinct_muse.git
+cd instinct_muse
+cp .env.example .env   # add OPENCODE_API_KEY
+docker compose up --build</code></pre>
+    <p>Then connect a WebSocket client to <code>ws://localhost:8000/ws/chat</code>.</p>
+  </section>
+
+  <section>
+    <h2>Roadmap</h2>
+    <ol class="roadmap">
+      <li><b>Week 1:</b> gateway, chat and agent loop</li>
+      <li><b>Week 2:</b> sandboxed shell tool</li>
+      <li><b>Week 3:</b> browser worker actions</li>
+      <li><b>Week 4:</b> egress gate and surrogate tokens for connectors</li>
+    </ol>
+  </section>
+</main>
+
+<footer class="wrap"><p>instinct_muse · Apache-2.0</p></footer>
+</body>
+</html>
