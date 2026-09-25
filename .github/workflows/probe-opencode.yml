@@ -1,0 +1,88 @@
+name: probe-opencode
+# One question: does OpenCode's free Zen model work UNAUTHENTICATED on a fresh
+# macOS runner? The whole no-user-testing plan depends on it. This workflow
+# installs the CLI, starts `opencode serve`, lists providers/models, and runs
+# one real chat turn against the free "Muse Spark" model.
+on:
+  workflow_dispatch:
+  push:
+    branches: [e2e-harness]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-15
+    steps:
+      - name: Install OpenCode CLI
+        run: |
+          curl -fsSL https://opencode.ai/install | bash
+          "$HOME/.opencode/bin/opencode" --version
+      - name: Start server and list providers
+        run: |
+          export PATH="$HOME/.opencode/bin:$PATH"
+          mkdir -p /tmp/probe && cd /tmp/probe
+          nohup opencode serve --port 4096 --hostname 127.0.0.1 > serve.log 2>&1 &
+          for i in $(seq 1 20); do
+            curl -sf http://127.0.0.1:4096/global/health && break || sleep 2
+          done
+          echo '--- /provider (connected + free models) ---'
+          curl -s http://127.0.0.1:4096/provider > provider.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('provider.json'))
+          print('connected:', d.get('connected'))
+          print('default:', d.get('default'))
+          for p in d.get('all', []):
+              free = {m: (v.get('name'), (v.get('cost') or {})) for m, v in (p.get('models') or {}).items()
+                      if 'free' in ((v.get('name') or '') + m).lower() or 'spark' in ((v.get('name') or '') + m).lower()}
+              if free:
+                  print('provider', p.get('id'), p.get('name'))
+                  for m, v in free.items():
+                      print('   model:', m, '->', v)
+          PY
+          echo '--- serve.log tail ---'
+          tail -5 serve.log
+      - name: Chat turn on the free Muse Spark model
+        run: |
+          export PATH="$HOME/.opencode/bin:$PATH"
+          cd /tmp/probe
+          python3 - <<'PY'
+          import json, subprocess, sys, urllib.request
+
+          def req(method, path, body=None, timeout=300):
+              r = urllib.request.Request('http://127.0.0.1:4096' + path,
+                  data=json.dumps(body).encode() if body is not None else None,
+                  headers={'Content-Type': 'application/json'}, method=method)
+              return json.load(urllib.request.urlopen(r, timeout=timeout))
+
+          d = json.load(open('provider.json'))
+          pick = None
+          for p in d.get('all', []):
+              for m, v in (p.get('models') or {}).items():
+                  name = (v.get('name') or '') + ' ' + m
+                  if 'spark' in name.lower() and 'free' in name.lower():
+                      pick = (p['id'], m); break
+              if pick: break
+          if not pick:
+              for p in d.get('all', []):
+                  for m, v in (p.get('models') or {}).items():
+                      if 'free' in ((v.get('name') or '') + m).lower():
+                          pick = (p['id'], m); break
+                  if pick: break
+          print('picked model:', pick)
+          if not pick:
+              sys.exit('NO FREE MODEL FOUND - report back for Gemini key')
+
+          sess = req('POST', '/session', {'title': 'ci-probe'})
+          print('session:', sess['id'])
+          resp = req('POST', f"/session/{sess['id']}/message", {
+              'parts': [{'type': 'text', 'text': 'Reply with exactly: PROBE_OK'}],
+              'model': {'providerID': pick[0], 'modelID': pick[1]}}, timeout=300)
+          text = json.dumps(resp)
+          print('reply keys:', list(resp.keys()) if isinstance(resp, dict) else type(resp))
+          print('REPLY_SNIPPET:', text[:800])
+          if 'PROBE_OK' in text:
+              print('PROBE RESULT: PASS - free model works unauthenticated')
+          else:
+              print('PROBE RESULT: model responded but without expected marker (inspect snippet)')
+          PY
