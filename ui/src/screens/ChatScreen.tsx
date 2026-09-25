@@ -94,6 +94,8 @@ export default function ChatScreen({ initialChatId }: { initialChatId?: string }
   const openConversationRef = useRef((conv: Conversation) => { void conv; });
   const initialChatDone = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [showInvite, setShowInvite] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const onAttach = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -362,7 +364,7 @@ export default function ChatScreen({ initialChatId }: { initialChatId?: string }
               <AgentAvatar size={56} />
               <span className="agent-name">Muse</span>
             </div>
-            <button className="invite-btn" aria-label="Invite friends">
+            <button className="invite-btn" aria-label="Invite friends" onClick={() => setShowInvite(true)}>
               <GiftIcon /> <span>Invite</span>
             </button>
             {!active && (
@@ -443,6 +445,29 @@ export default function ChatScreen({ initialChatId }: { initialChatId?: string }
           </div>
         </div>
       </div>
+      {showInvite && (
+          <div className="modal-backdrop" onClick={() => setShowInvite(false)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <h3>Invite friends</h3>
+              <p className="dim">Share Instinct Muse with a friend. They get the app, you get the satisfaction.</p>
+              <div className="settings-row">
+                <div className="settings-row-text">
+                  <h3>Your invite code</h3>
+                  <p>MUSE-DEMO-2026</p>
+                </div>
+                <button className="pill-btn" onClick={() => {
+                  navigator.clipboard?.writeText("MUSE-DEMO-2026").then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  }).catch(() => {});
+                }}>{copied ? "Copied" : "Copy"}</button>
+              </div>
+              <div className="modal-actions">
+                <button className="pill-btn" onClick={() => setShowInvite(false)}>Close</button>
+              </div>
+            </div>
+          </div>
+        )}
     </>
   );
 }
