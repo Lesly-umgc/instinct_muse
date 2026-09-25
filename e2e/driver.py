@@ -126,24 +126,18 @@ async def stage_main(base: str) -> None:
 
     status, before = req(base, "GET", "/api/artifacts")
     n_before = len(before.get("artifacts", []))  # type: ignore[union-attr]
-    await ws_turn(base, cid,
-        "Create a text file named e2e_artifact.txt containing exactly 'hello muse'. Then stop.")
-    for _ in range(30):
-        status, appr = req(base, "GET", "/api/approvals?status=pending")
-        pending = appr.get("approvals", [])  # type: ignore[union-attr]
-        if not pending:
-            break
-        for a in pending:
-            req(base, "POST", f"/api/approvals/{a['id']}", {"decision": "allow"})
-        await asyncio.sleep(2)
-    status, after = req(base, "GET", "/api/artifacts")
-    n_after = len(after.get("artifacts", []))  # type: ignore[union-attr]
-    if n_after <= n_before:
-        # The free model sometimes answers with text instead of using its
-        # file tool. Retry once with a firmer instruction before failing.
-        await ws_turn(base, cid,
-            "You did not create the file. Use your file tool now to write e2e_artifact.txt "
-            "containing exactly 'hello muse'.")
+    prompts = [
+        "Create a text file named e2e_artifact.txt containing exactly 'hello muse'. Then stop.",
+        "You did not create the file. Use your file tool now to write e2e_artifact.txt "
+        "containing exactly 'hello muse'.",
+        "Last try: call your bash or write tool to create the file e2e_artifact.txt with "
+        "content 'hello muse'. Do not just describe it - actually create it.",
+    ]
+    n_after, reply = n_before, ""
+    for attempt, prompt in enumerate(prompts, 1):
+        conv = await ws_turn(base, cid, prompt)
+        reply = last_assistant_text(conv)
+        print(f"artifact turn {attempt} reply: {reply[:160]}", flush=True)
         for _ in range(30):
             status, appr = req(base, "GET", "/api/approvals?status=pending")
             pending = appr.get("approvals", [])  # type: ignore[union-attr]
@@ -154,8 +148,10 @@ async def stage_main(base: str) -> None:
             await asyncio.sleep(2)
         status, after = req(base, "GET", "/api/artifacts")
         n_after = len(after.get("artifacts", []))  # type: ignore[union-attr]
+        if n_after > n_before:
+            break
     check("file creation captured as artifact", n_after > n_before,
-          f"{n_before} -> {n_after} artifacts")
+          f"{n_before} -> {n_after} artifacts; last reply: {reply[:100]}")
 
     status, _ = req(base, "DELETE", f"/api/conversations/{cid}")
     status2, clist = req(base, "GET", "/api/conversations")
