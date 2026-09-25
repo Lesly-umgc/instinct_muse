@@ -59,6 +59,7 @@ class Hub:
         self._turn_starts: dict[str, float] = {}  # session_id -> turn start time
         self._sockets: dict[str, set[WebSocket]] = {}  # conversation_id -> sockets
         self._sessions: dict[str, str] = {}  # engine_session_id -> conversation_id
+        self._shutting_down = False
 
     async def startup(self) -> None:
         self.cli_probes = await detect_all()
@@ -100,6 +101,7 @@ class Hub:
                     "That turn was interrupted when the app quit - send the message again.")
 
     async def shutdown(self) -> None:
+        self._shutting_down = True
         for task in self._event_tasks.values():
             task.cancel()
         for engine in self.engines.values():
@@ -259,8 +261,15 @@ class Hub:
             await self._persist_error(cid, session_id or "-",
                 "OpenCode took too long to respond. The turn was aborted; send the message again.")
         except Exception as exc:
+            if self._shutting_down:
+                # The process is exiting: leave the turn unanswered so the
+                # next boot's sweep marks it as interrupted instead of
+                # recording a spurious request failure.
+                log.info("turn dropped during shutdown conversation=%s", cid)
+                return
             log.exception("turn failed conversation=%s session=%s", cid, session_id)
-            await self._persist_error(cid, session_id or "-", f"OpenCode request failed: {exc}")
+            detail = str(exc) or type(exc).__name__
+            await self._persist_error(cid, session_id or "-", f"OpenCode request failed: {detail}")
 
     async def _persist_error(self, cid: str, session_id: str, text: str) -> None:
         """Record a failed turn as a visible assistant message so the user is
