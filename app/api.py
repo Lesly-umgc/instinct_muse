@@ -11,6 +11,9 @@ import json
 import logging
 from contextlib import suppress
 
+import time as _time
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, WebSocket
 from pydantic import BaseModel
 
@@ -53,6 +56,7 @@ class Hub:
         self._managed: ManagedOpenCodeServer | None = None
         self._event_tasks: dict[str, asyncio.Task] = {}
         self._buffers: dict[str, list[str]] = {}  # session_id -> text deltas
+        self._turn_starts: dict[str, float] = {}  # session_id -> turn start time
         self._sockets: dict[str, set[WebSocket]] = {}  # conversation_id -> sockets
         self._sessions: dict[str, str] = {}  # engine_session_id -> conversation_id
 
@@ -139,9 +143,29 @@ class Hub:
             await self._broadcast(cid, {"type": "error", "text": ev.text})
 
     async def _capture_artifacts(self, engine: EngineAdapter, session_id: str, cid: str) -> None:
-        """After a turn, record files the engine created into the Library."""
+        """After a turn, record files the engine created into the Library.
+
+        OpenCode's /session/{id}/diff only tracks changes inside a git
+        worktree and comes back empty for ordinary agent writes, so the
+        reliable signal is the workspace itself: any file touched since the
+        turn started is something the agent made or changed this turn.
+        """
         if not isinstance(engine, OpenCodeServerEngine):
             return
+        for path in self._workspace_changes(session_id):
+            if self.store.find_artifact_by_path(path):
+                continue
+            content: str | None = None
+            try:
+                p = Path(path)
+                if p.stat().st_size <= 200_000:
+                    content = p.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                content = None
+            art = self.store.add_artifact(
+                kind=artifact_kind(path), path=path,
+                title=path.rsplit("/", 1)[-1], content=content, conversation_id=cid)
+            await self._broadcast(cid, {"type": "artifact", "artifact": art})
         try:
             diffs = await engine.session_diff(session_id)
         except Exception:
@@ -161,6 +185,28 @@ class Hub:
                 kind=artifact_kind(path), path=path,
                 title=path.rsplit("/", 1)[-1], content=content, conversation_id=cid)
             await self._broadcast(cid, {"type": "artifact", "artifact": art})
+
+    def _workspace_changes(self, session_id: str) -> list[str]:
+        """Files in the agent workspace created or modified since this turn."""
+        start = self._turn_starts.get(session_id, 0.0)
+        if not start:
+            return []
+        workspace = Path.home() / ".instinct_muse" / "workspace"
+        if not workspace.is_dir():
+            return []
+        out: list[str] = []
+        try:
+            for p in workspace.rglob("*"):
+                if not p.is_file() or p.name.startswith(".") or ".git" in p.parts:
+                    continue
+                try:
+                    if p.stat().st_mtime >= start - 2:
+                        out.append(str(p))
+                except OSError:
+                    continue
+        except OSError:
+            return []
+        return out[:50]
 
     async def _broadcast(self, cid: str | None, payload: dict) -> None:
         if not cid:
@@ -201,6 +247,7 @@ class Hub:
             if conv["model"] and "/" in conv["model"]:
                 provider_id, model_id = conv["model"].split("/", 1)
             self._buffers.setdefault(session_id, [])
+            self._turn_starts[session_id] = _time.time()
             await self._broadcast(cid, {"type": "status", "state": "working"})
             await asyncio.wait_for(engine.send(session_id, text, provider_id, model_id),
                                    timeout=REPLY_TIMEOUT_SECONDS)
