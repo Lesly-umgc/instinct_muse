@@ -106,10 +106,14 @@ export default function LibraryScreen() {
         </div>
         {selected && (
           <div className="modal-backdrop" onClick={() => setSelected(null)}>
-            <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal artifact-preview" onClick={(e) => e.stopPropagation()}>
               <button className="close-btn" onClick={() => setSelected(null)} aria-label="Close">x</button>
+              <div className="preview-head">
+                <span className="kind-badge">{KIND_LABEL[selected.kind] ?? "File"}</span>
+                <span className="dim">{new Date(selected.created_at * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+              </div>
               <h3>{selected.title}</h3>
-              <p className="dim">{selected.path}</p>
+              <p className="dim preview-path">{selected.path}</p>
               <pre>{selected.content ?? "(no preview available)"}</pre>
             </div>
           </div>

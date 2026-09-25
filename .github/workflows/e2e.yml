@@ -145,7 +145,7 @@ jobs:
         run: |
           mkdir -p /tmp/shots
           bin="$HOME/Applications/Instinct Muse.app/Contents/MacOS/instinct-muse"
-          for scr in chat feed ideas goals library search; do
+          for scr in chat feed ideas goals library search settings; do
             pkill -f 'Instinct Muse' || true
             pkill -f muse-service || true
             sleep 2
