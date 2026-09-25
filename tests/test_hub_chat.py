@@ -98,7 +98,7 @@ async def test_timeout_persists_visible_error(hub, monkeypatch):
     assert engine.aborted == ["ses_fake"]
     msgs = hub.store.list_messages(conv["id"])
     assert [m["role"] for m in msgs] == ["user", "assistant"]
-    assert msgs[1]["content"].startswith("Error:") and "did not reply" in msgs[1]["content"]
+    assert msgs[1]["content"].startswith("Error:") and "took too long" in msgs[1]["content"]
 
 
 async def test_engine_error_persists_visible_error(hub):
@@ -119,3 +119,41 @@ def test_delete_conversation_removes_chat_and_messages(hub):
     assert hub.store.list_messages(conv["id"]) == []
     # Library artifacts survive the chat being deleted
     assert hub.store.find_artifact_by_path("/tmp/x.md") is not None
+
+
+class SlowSessionEngine(FakeEngine):
+    async def create_session(self, title: str | None = None) -> str:
+        await asyncio.sleep(5.0)
+        return "ses_late"
+
+
+async def test_session_create_timeout_persists_visible_error(hub, monkeypatch):
+    """If OpenCode hangs while starting the session, the failure must surface
+    in the chat - not vanish into the log (the Montreal-trip bug)."""
+    monkeypatch.setattr(api, "SESSION_TIMEOUT_SECONDS", 0.05)
+    hub.engines["fake"] = SlowSessionEngine()
+    conv = make_conv(hub)
+    await hub.send_user_message(conv["id"], "plan a trip")  # must not raise
+    msgs = hub.store.list_messages(conv["id"])
+    assert [m["role"] for m in msgs] == ["user", "assistant"]
+    assert msgs[1]["content"].startswith("Error:") and "took too long" in msgs[1]["content"]
+
+
+def test_startup_marks_interrupted_turn(hub):
+    """A conversation whose last message is from the user lost its turn with
+    the previous process; the sweep says so, and stays idempotent."""
+    conv = make_conv(hub)
+    hub.store.add_message(conv["id"], "user", "unanswered")
+    hub._mark_interrupted_turns()
+    msgs = hub.store.list_messages(conv["id"])
+    assert msgs[-1]["role"] == "assistant" and "interrupted" in msgs[-1]["content"]
+    hub._mark_interrupted_turns()
+    assert len(hub.store.list_messages(conv["id"])) == 2
+
+
+def test_startup_leaves_answered_chats_alone(hub):
+    conv = make_conv(hub)
+    hub.store.add_message(conv["id"], "user", "hi")
+    hub.store.add_message(conv["id"], "assistant", "hello")
+    hub._mark_interrupted_turns()
+    assert len(hub.store.list_messages(conv["id"])) == 2

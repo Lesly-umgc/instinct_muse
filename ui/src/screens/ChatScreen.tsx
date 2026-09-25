@@ -22,6 +22,10 @@ export default function ChatScreen() {
   const [error, setError] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const [thinking, setThinking] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const activeRef = useRef<Conversation | null>(null);
+  activeRef.current = active;
 
   const [serviceState, setServiceState] = useState<"starting" | "ready" | "unavailable">("starting");
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -83,7 +87,10 @@ export default function ChatScreen() {
         })));
       });
       const ws = conversationSocket(conv.id, (ev) => {
-        if (ev.type === "text_delta") {
+        if (ev.type === "status" && ev.state === "working") {
+          setThinking(true);
+        } else if (ev.type === "text_delta") {
+          setThinking(false);
           setMessages((prev) => {
             const last = prev[prev.length - 1];
             if (last && last.role === "assistant" && last.streaming) {
@@ -92,11 +99,13 @@ export default function ChatScreen() {
             return [...prev, { role: "assistant", content: String(ev.text ?? ""), streaming: true }];
           });
         } else if (ev.type === "message_done") {
+          setThinking(false);
           setMessages((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: undefined } : m)));
           refreshConversations();
         } else if (ev.type === "approval") {
           setApprovals((prev) => [...prev, ev.approval as Approval]);
         } else if (ev.type === "error") {
+          setThinking(false);
           setMessages((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: undefined } : m)));
           setError(String(ev.text ?? "unknown error"));
         } else if (ev.type === "conversation_renamed") {
@@ -138,40 +147,45 @@ export default function ChatScreen() {
   };
 
   const deleteChat = async (conv: Conversation) => {
-    if (!window.confirm(`Delete chat "${conv.title}"? This cannot be undone.`)) return;
     try {
       await api.deleteConversation(conv.id);
     } catch (e) {
       setError(String(e));
       return;
     }
-    if (active?.id === conv.id) {
+    setConfirmDeleteId(null);
+    if (activeRef.current?.id === conv.id) {
       setActive(null);
       setMessages([]);
     }
     refreshConversations();
   };
 
-  const send = () => {
-    const text = draft.trim();
-    if (!text || !active) return;
-    const payload = JSON.stringify({ type: "message", text });
+  // Retry delivery against a live socket for ~10s, reconnecting as needed,
+  // so a message is never silently dropped by connection churn. If it still
+  // cannot go out, say so visibly instead of pretending it was sent.
+  const deliver = (cid: string, payload: string, attempt: number) => {
+    const current = activeRef.current;
+    if (!current || current.id !== cid) return; // user moved on before it went out
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(payload);
-    } else {
-      // Socket dropped: reconnect first so the message is never silently lost.
-      openConversation(active);
-      const fresh = wsRef.current;
-      if (fresh) {
-        const queue = () => {
-          if (fresh.readyState === WebSocket.OPEN) fresh.send(payload);
-        };
-        fresh.addEventListener("open", queue, { once: true });
-      }
+      return;
     }
+    if (attempt >= 20) {
+      setError("Message not sent - the connection dropped. Copy it and send it again.");
+      return;
+    }
+    if (!ws || ws.readyState === WebSocket.CLOSED) openConversation(current);
+    setTimeout(() => deliver(cid, payload, attempt + 1), 500);
+  };
+
+  const send = () => {
+    const text = draft.trim();
+    if (!text || !active) return;
     setMessages((prev) => [...prev, { role: "user", content: text, ts: Date.now() / 1000 }]);
     setDraft("");
+    deliver(active.id, JSON.stringify({ type: "message", text }), 0);
   };
 
   const decide = async (approval: Approval, decision: "allow" | "always" | "deny") => {
@@ -197,12 +211,19 @@ export default function ChatScreen() {
               onClick={() => openConversation(c)}
             >
               <span className="side-title">{c.title}</span>
-              <button
-                className="del-chat"
-                title="Delete chat"
-                aria-label={`Delete chat ${c.title}`}
-                onClick={(e) => { e.stopPropagation(); void deleteChat(c); }}
-              >×</button>
+              {confirmDeleteId === c.id ? (
+                <span className="del-confirm" onClick={(e) => e.stopPropagation()}>
+                  <button className="del-yes" onClick={() => void deleteChat(c)}>Delete</button>
+                  <button className="del-no" onClick={() => setConfirmDeleteId(null)}>Keep</button>
+                </span>
+              ) : (
+                <button
+                  className="del-chat"
+                  title="Delete chat"
+                  aria-label={`Delete chat ${c.title}`}
+                  onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(c.id); }}
+                >×</button>
+              )}
             </div>
           ))}
           {conversations.length === 0 && (
@@ -268,6 +289,7 @@ export default function ChatScreen() {
                 )}
               </div>
             ))}
+            {thinking && <div className="bubble assistant thinking">Thinking... (slow models can take a minute or two)</div>}
             {error && <div className="bubble assistant">Error: {error}</div>}
             <div ref={bottomRef} />
           </div>

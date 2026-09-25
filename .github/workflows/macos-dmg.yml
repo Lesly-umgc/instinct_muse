@@ -134,6 +134,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create v0.1.3-mac dist/release/*.dmg \
-            --title 'Instinct Muse v0.1.3 Mac (ad-hoc signed)' --prerelease \
-            --notes 'Apple Silicon only. Ad-hoc signed, not notarized: right-click Open or allow in Privacy & Security on first launch. Chat fixes: replies can no longer be lost by connection churn (the client keeps one stable socket per chat and the service persists every reply and error before broadcasting, so a reopened chat always shows them); permission prompts from OpenCode flow again via its event stream; chats are auto-titled from your first message; chats can be deleted (hover a chat, click the x, confirm); the reply timeout is 5 minutes instead of 2. OpenCode must be installed and logged in for local chat.'
+          gh release create v0.1.4-mac dist/release/*.dmg \
+            --title 'Instinct Muse v0.1.4 Mac (ad-hoc signed)' --prerelease \
+            --notes 'Apple Silicon only. Ad-hoc signed, not notarized: right-click Open or allow in Privacy & Security on first launch. Fixes: chat deletion now works (the confirm is in-app; the system confirm dialog is not supported in the app window); a turn interrupted by quitting the app is marked in the chat instead of looking silently unanswered; session-start failures and slow-model timeouts (now 10 minutes) always surface as visible messages; a Thinking indicator shows while slow models work; sending retries across connection drops for 10s before reporting failure. OpenCode must be installed and logged in for local chat.'

@@ -22,9 +22,12 @@ from app.store import Store
 
 log = logging.getLogger("instinct_muse")
 
-# OpenCode itself allows 300s round trips; give the full sync call that much
-# room before giving up and recording the failure as a visible chat message.
-REPLY_TIMEOUT_SECONDS = 300
+# OpenCode round trips on slow models can run several minutes; give the full
+# sync call room before giving up and recording a visible chat message.
+REPLY_TIMEOUT_SECONDS = 600
+SESSION_TIMEOUT_SECONDS = 60
+# A dead-but-unnoticed client socket must never stall the reply pipeline.
+SOCKET_WRITE_TIMEOUT_SECONDS = 5
 
 KIND_BY_EXT = {
     ".md": "document", ".txt": "document", ".pdf": "document", ".doc": "document",
@@ -68,7 +71,8 @@ class Hub:
             except OSError as exc:
                 log.warning("could not spawn opencode serve: %s", exc)
         if server_url:
-            engine = OpenCodeServerEngine(server_url, settings.opencode_server_password)
+            engine = OpenCodeServerEngine(server_url, settings.opencode_server_password,
+                                             timeout=REPLY_TIMEOUT_SECONDS + 60)
             status = await engine.status()
             if status.available:
                 self.engines[engine.id] = engine
@@ -78,6 +82,18 @@ class Hub:
         zen = ZenApiEngine(settings.opencode_api_key, settings.opencode_base_url, settings.model)
         self.engines[zen.id] = zen
         self._event_tasks[zen.id] = asyncio.create_task(self._pump(zen))
+        self._mark_interrupted_turns()
+
+    def _mark_interrupted_turns(self) -> None:
+        """Any conversation whose last message is from the user had its turn
+        die with the previous process (app quit or crash). Say so in the chat
+        instead of leaving the message looking silently unanswered."""
+        for conv in self.store.list_conversations():
+            msgs = self.store.list_messages(conv["id"])
+            if msgs and msgs[-1]["role"] == "user":
+                self.store.add_message(
+                    conv["id"], "assistant",
+                    "That turn was interrupted when the app quit - send the message again.")
 
     async def shutdown(self) -> None:
         for task in self._event_tasks.values():
@@ -152,7 +168,8 @@ class Hub:
         dead = []
         for ws in self._sockets.get(cid, set()):
             try:
-                await ws.send_text(json.dumps(payload))
+                await asyncio.wait_for(ws.send_text(json.dumps(payload)),
+                                       timeout=SOCKET_WRITE_TIMEOUT_SECONDS)
             except Exception:
                 dead.append(ws)
         for ws in dead:
@@ -169,31 +186,34 @@ class Hub:
         self.store.add_message(cid, "user", text)
         await self._maybe_autotitle(conv, text)
         session_id = conv["engine_session_id"]
-        if not session_id:
-            session_id = await engine.create_session(title=conv["title"])
-            self.store.set_engine_session(cid, session_id)
-        # Always (re)register the session->conversation mapping: after an app
-        # or service restart the Hub is empty while conversations still carry
-        # their engine_session_id, and replies without a mapping were silently
-        # discarded (never persisted, never broadcast).
-        self._sessions[session_id] = cid
-        provider_id = model_id = None
-        if conv["model"] and "/" in conv["model"]:
-            provider_id, model_id = conv["model"].split("/", 1)
-        self._buffers.setdefault(session_id, [])
         try:
+            if not session_id:
+                session_id = await asyncio.wait_for(
+                    engine.create_session(title=conv["title"]),
+                    timeout=SESSION_TIMEOUT_SECONDS)
+                self.store.set_engine_session(cid, session_id)
+            # Always (re)register the session->conversation mapping: after an
+            # app or service restart the Hub is empty while conversations
+            # still carry their engine_session_id, and replies without a
+            # mapping were silently discarded.
+            self._sessions[session_id] = cid
+            provider_id = model_id = None
+            if conv["model"] and "/" in conv["model"]:
+                provider_id, model_id = conv["model"].split("/", 1)
+            self._buffers.setdefault(session_id, [])
+            await self._broadcast(cid, {"type": "status", "state": "working"})
             await asyncio.wait_for(engine.send(session_id, text, provider_id, model_id),
                                    timeout=REPLY_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
-            log.error("turn timeout session=%s", session_id)
+            log.error("turn timeout conversation=%s session=%s", cid, session_id)
             with suppress(Exception):
-                await engine.abort(session_id)
-            await self._persist_error(cid, session_id,
-                "OpenCode did not reply within %ds. The turn was aborted; send the message again."
-                % REPLY_TIMEOUT_SECONDS)
+                if session_id:
+                    await engine.abort(session_id)
+            await self._persist_error(cid, session_id or "-",
+                "OpenCode took too long to respond. The turn was aborted; send the message again.")
         except Exception as exc:
-            log.exception("turn failed session=%s", session_id)
-            await self._persist_error(cid, session_id, f"OpenCode request failed: {exc}")
+            log.exception("turn failed conversation=%s session=%s", cid, session_id)
+            await self._persist_error(cid, session_id or "-", f"OpenCode request failed: {exc}")
 
     async def _persist_error(self, cid: str, session_id: str, text: str) -> None:
         """Record a failed turn as a visible assistant message so the user is

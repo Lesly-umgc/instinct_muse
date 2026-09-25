@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "instinct-muse"
-version = "0.1.3"
+version = "0.1.4"
 description = "Open-source personal AI agent inspired by Meta's Muse: sandboxed agent, credential broker, egress gate, browser worker."
 readme = "README.md"
 license = { text = "Apache-2.0" }
