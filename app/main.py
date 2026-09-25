@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Instinct Muse", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"], allow_methods=["GET", "POST"], allow_headers=["content-type"])
+app.add_middleware(CORSMiddleware, allow_origins=["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"], allow_methods=["*"], allow_headers=["content-type"])
 app.include_router(router)
 
 

@@ -42,7 +42,9 @@ export default function ChatScreen() {
         const r = await api.engines();
         if (cancelled) return;
         setEngines(r.engines);
-        const first = r.engines.find((e) => e.id === r.default && e.available)
+        const savedEngine = localStorage.getItem("muse.engine");
+        const first = (savedEngine && r.engines.find((e) => e.id === savedEngine && e.available))
+          ?? r.engines.find((e) => e.id === r.default && e.available)
           ?? r.engines.find((e) => e.available && !e.id.startsWith("cli:"));
         if (first) setEngine(first.id);
         api.conversations().then((r) => { if (!cancelled) setConversations(r.conversations); }).catch((e) => setError(String(e)));
@@ -59,10 +61,17 @@ export default function ChatScreen() {
     if (!engine || engine.startsWith("cli:")) return;
     api.models(engine).then((r) => {
       setModels(r.models);
-      const def = r.models.find((m) => m.is_default) ?? r.models[0];
+      const savedModel = localStorage.getItem("muse.model");
+      const def = (savedModel && r.models.find((m) => `${m.provider_id}/${m.model_id}` === savedModel))
+        ?? r.models.find((m) => m.is_default) ?? r.models[0];
       setModel(def ? `${def.provider_id}/${def.model_id}` : "");
     }).catch((e) => { setModels([]); setError(String(e)); });
   }, [engine]);
+
+  // Remember the engine/model choice so the app always starts on it
+  // (his default: OpenCode Zen / Muse Spark 1.3 Free).
+  useEffect(() => { if (engine) localStorage.setItem("muse.engine", engine); }, [engine]);
+  useEffect(() => { if (model) localStorage.setItem("muse.model", model); }, [model]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
