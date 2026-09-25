@@ -101,7 +101,9 @@ jobs:
           xattr -dr com.apple.quarantine "$HOME/Applications/Instinct Muse.app" 2>/dev/null || true
           ls "$HOME/Applications/Instinct Muse.app/Contents/MacOS"
       - name: Driver dependencies
-        run: python3 -m pip install websockets
+        run: |
+          python3 -m venv /tmp/e2e-venv
+          /tmp/e2e-venv/bin/pip install --quiet websockets
       - name: Launch app and wait for service
         run: |
           open -a "$HOME/Applications/Instinct Muse.app"
@@ -110,21 +112,21 @@ jobs:
           done
           curl -sf http://127.0.0.1:18764/health | grep -q instinct_muse
       - name: E2E main stage (chat, title, artifact, delete, CORS)
-        run: python3 e2e/driver.py --stage main
+        run: /tmp/e2e-venv/bin/python e2e/driver.py --stage main
       - name: Screenshot after chat
         run: |
           mkdir -p /tmp/shots
           screencapture -x /tmp/shots/01-after-chat.png || echo 'screencapture failed'
       - name: Restart stage - arm, kill, relaunch
         run: |
-          python3 e2e/driver.py --stage arm-restart
+          /tmp/e2e-venv/bin/python e2e/driver.py --stage arm-restart
           (sleep 1; pkill -f 'Instinct Muse' || true; pkill -f muse-service || true) &
           sleep 4
           pgrep -fl 'muse-service' || echo 'service down as expected'
           open -a "$HOME/Applications/Instinct Muse.app"
           sleep 3
       - name: E2E post-restart stage
-        run: python3 e2e/driver.py --stage post-restart
+        run: /tmp/e2e-venv/bin/python e2e/driver.py --stage post-restart
       - name: Final screenshot
         if: always()
         run: screencapture -x /tmp/shots/02-final.png || echo 'screencapture failed'
