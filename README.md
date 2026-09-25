@@ -110,16 +110,17 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 ## Downloadable Mac build (Apple Silicon)
 
-The [v0.1.0-mac release](https://github.com/Lesly-umgc/instinct_muse/releases/tag/v0.1.0-mac)
-contains an unsigned Apple Silicon `.dmg` built by GitHub Actions. Drag Instinct Muse
-into Applications. On first launch, macOS may block it because it is unsigned:
+The v0.1.1-mac release contains an ad-hoc signed Apple Silicon `.dmg` built by GitHub Actions. The workflow smoke-tests the bundled service before publishing. Drag Instinct Muse
+into Applications. On first launch, macOS may warn because it is not notarized:
 right-click the app in Applications and select **Open**, then confirm. If macOS
 still blocks it, use System Settings > Privacy & Security > Open Anyway. Do not
 turn off Gatekeeper globally. Intel Macs are not supported by this build.
 
 The DMG includes a frozen Python app service, started by the app on loopback
-port 8000; no separate Python install is needed. The app still needs a working
+port 18764; no separate Python install is needed. If another process occupies that port, diagnostics will show the startup failure rather than connecting to the wrong server. The app still needs a working
 [OpenCode CLI](https://opencode.ai) installed and logged in for local AI chat.
 The OpenCode adapter has not yet been verified with a live login on a Mac.
 Feed, Ideas, and Goals remain placeholders. This is a pre-release, not a
 signed/notarized production app.
+
+If startup or detection fails, open **Diagnostics** at the top of Chat. Service logs are at `~/.instinct_muse/service.log` and shell logs at `~/.instinct_muse/desktop.log`. Finder apps do not inherit Terminal PATH, so the app searches common local binary folders, including `~/.local/bin`. The installed binary was tested in CI, but the app still needs an interactive test with a logged-in OpenCode on a real Mac.

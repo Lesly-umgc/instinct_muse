@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, conversationSocket } from "../api";
+import { api, conversationSocket, serviceOrigin, waitForService } from "../api";
 import type { Approval, Conversation, EngineStatus, Message, ModelInfo } from "../types";
 
 interface LocalMessage {
@@ -23,15 +23,32 @@ export default function ChatScreen() {
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
+  const [serviceState, setServiceState] = useState<"starting" | "ready" | "unavailable">("starting");
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+
   useEffect(() => {
-    api.engines().then((r) => {
-      setEngines(r.engines);
-      const first = r.engines.find((e) => e.id === r.default && e.available)
-        ?? r.engines.find((e) => e.available && !e.id.startsWith("cli:"));
-      if (first) setEngine(first.id);
-    }).catch((e) => setError(String(e)));
-    refreshConversations();
-    api.pendingApprovals().then((r) => setApprovals(r.approvals)).catch(() => {});
+    let cancelled = false;
+    const load = async () => {
+      setServiceState("starting");
+      try {
+        await waitForService();
+        if (cancelled) return;
+        setServiceState("ready");
+        setError("");
+        const r = await api.engines();
+        if (cancelled) return;
+        setEngines(r.engines);
+        const first = r.engines.find((e) => e.id === r.default && e.available)
+          ?? r.engines.find((e) => e.available && !e.id.startsWith("cli:"));
+        if (first) setEngine(first.id);
+        api.conversations().then((r) => { if (!cancelled) setConversations(r.conversations); }).catch((e) => setError(String(e)));
+        api.pendingApprovals().then((r) => { if (!cancelled) setApprovals(r.approvals); }).catch(() => {});
+      } catch (e) {
+        if (!cancelled) { setServiceState("unavailable"); setError(String(e)); }
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -40,7 +57,7 @@ export default function ChatScreen() {
       setModels(r.models);
       const def = r.models.find((m) => m.is_default) ?? r.models[0];
       setModel(def ? `${def.provider_id}/${def.model_id}` : "");
-    }).catch(() => setModels([]));
+    }).catch((e) => { setModels([]); setError(String(e)); });
   }, [engine]);
 
   useEffect(() => {
@@ -113,7 +130,7 @@ export default function ChatScreen() {
       <div className="sidebar">
         <div className="sidebar-header">
           <h2>Chats</h2>
-          <button className="new-chat-btn" onClick={newChat} disabled={!engine}>+ New</button>
+          <button className="new-chat-btn" onClick={newChat} disabled={!engine || serviceState !== "ready"}>+ New</button>
         </div>
         <div className="sidebar-list">
           {conversations.map((c) => (
@@ -147,10 +164,17 @@ export default function ChatScreen() {
               </option>
             ))}
           </select>
+          <button className="diagnostics-toggle" onClick={() => setDiagnosticsOpen(!diagnosticsOpen)}>Diagnostics</button>
           {cliNotes.map((n) => (
             <span key={n.id} className="engine-note" title={n.reason}>{n.name}: not detected</span>
           ))}
         </div>
+        {diagnosticsOpen && <section className="diagnostics" aria-label="Diagnostics">
+          <strong>App service: {serviceState}</strong> · {serviceOrigin}
+          <div>Logs: ~/.instinct_muse/desktop.log and ~/.instinct_muse/service.log</div>
+          {engines.map((e) => <div key={e.id}>{e.name}: {e.available ? `ready (${e.detail})` : e.reason || "unavailable"}</div>)}
+          {error && <div>{error}</div>}
+        </section>}
         <div className="messages">
           <div className="msg-column">
             {!active && (

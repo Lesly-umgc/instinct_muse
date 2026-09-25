@@ -54,7 +54,7 @@ class Hub:
         server_url = settings.opencode_server_url
         if not server_url and self.cli_probes.get("opencode") and self.cli_probes["opencode"].available:
             self._managed = ManagedOpenCodeServer(
-                settings.opencode_binary, settings.opencode_server_port,
+                self.cli_probes["opencode"].path or settings.opencode_binary, settings.opencode_server_port,
                 settings.opencode_server_password)
             try:
                 await self._managed.start()

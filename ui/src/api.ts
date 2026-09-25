@@ -1,10 +1,28 @@
 import type { Approval, Artifact, Conversation, EngineStatus, ModelInfo } from "./types";
 
 const desktop = "__TAURI_INTERNALS__" in window;
-const base = desktop ? "http://127.0.0.1:8000" : "";
+const base = desktop ? "http://127.0.0.1:18764" : "";
+
+export const serviceOrigin = base || location.origin;
+
+export async function waitForService(attempts = 25): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const response = await fetch(`${base}/health`, { cache: "no-store" });
+      if (response.ok && ((await response.json()).system === "instinct_muse")) return;
+    } catch { /* The bundled service may still be starting. */ }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`Instinct Muse service is not ready at ${serviceOrigin} (another app may be using its port). Check ~/.instinct_muse/desktop.log and ~/.instinct_muse/service.log.`);
+}
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${base}${path}`, init);
+  let res: Response;
+  try {
+    res = await fetch(`${base}${path}`, init);
+  } catch (cause) {
+    throw new Error(`Cannot reach app service at ${serviceOrigin}. Check ~/.instinct_muse/desktop.log and ~/.instinct_muse/service.log. (${String(cause)})`);
+  }
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   return res.json();
 }
@@ -36,7 +54,7 @@ export function conversationSocket(
   onEvent: (ev: Record<string, unknown>) => void,
 ): WebSocket {
   const proto = !desktop && location.protocol === "https:" ? "wss" : "ws";
-  const host = desktop ? "127.0.0.1:8000" : location.host;
+  const host = desktop ? "127.0.0.1:18764" : location.host;
   const ws = new WebSocket(`${proto}://${host}/ws/conversations/${cid}`);
   ws.onmessage = (m) => {
     try {

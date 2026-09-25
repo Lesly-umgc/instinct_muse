@@ -34,15 +34,53 @@ jobs:
           mkdir -p ui/src-tauri/binaries
           cp dist/muse-service ui/src-tauri/binaries/muse-service-aarch64-apple-darwin
           chmod +x ui/src-tauri/binaries/muse-service-aarch64-apple-darwin
-      - name: Build and publish unsigned DMG
-        uses: tauri-apps/tauri-action@v1
+      - name: Build ad-hoc signed Mac app and DMG
+        run: cd ui && npx tauri build --target aarch64-apple-darwin
+      - name: Smoke test installed app payload before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="ui/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Instinct Muse.app"
+          sidecar="$app/Contents/MacOS/muse-service"
+          test -x "$sidecar"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign --verify --strict --verbose=2 "$sidecar"
+          # Test the actual signed sidecar inside the built .app, not a source/dev server.
+          "$sidecar" > /tmp/muse-smoke.log 2>&1 &
+          service_pid=$!
+          trap 'kill "$service_pid" 2>/dev/null || true; cat /tmp/muse-smoke.log' EXIT
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:18764/health | grep -q '"system":"instinct_muse"'; then
+              curl --fail --silent http://127.0.0.1:18764/api/engines | python -m json.tool > /tmp/muse-engines.json
+              cat /tmp/muse-engines.json
+              break
+            fi
+            if ! kill -0 "$service_pid" 2>/dev/null; then echo 'service exited early'; exit 1; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:18764/health | grep -q '"system":"instinct_muse"'
+          test -s ui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          kill "$service_pid" 2>/dev/null || true
+          wait "$service_pid" 2>/dev/null || true
+          # Also launch the packaged shell so missing permissions/sidecar paths
+          # fail CI, rather than just validating the service in isolation.
+          rm -f "$HOME/.instinct_muse/desktop.log"
+          "$app/Contents/MacOS/instinct-muse" > /tmp/muse-shell.log 2>&1 &
+          shell_pid=$!
+          trap 'kill "$shell_pid" 2>/dev/null || true; cat /tmp/muse-shell.log; cat "$HOME/.instinct_muse/desktop.log" 2>/dev/null || true' EXIT
+          for attempt in {1..60}; do
+            if grep -q 'service spawned' "$HOME/.instinct_muse/desktop.log" 2>/dev/null &&
+              curl --fail --silent http://127.0.0.1:18764/health | grep -q '"system":"instinct_muse"'; then
+              exit 0
+            fi
+            if ! kill -0 "$shell_pid" 2>/dev/null; then echo 'desktop shell exited early'; exit 1; fi
+            sleep 1
+          done
+          echo 'desktop shell did not start the service'; exit 1
+      - name: Publish tested DMG
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: ui
-          args: --target aarch64-apple-darwin
-          tagName: v0.1.0-mac
-          releaseName: Instinct Muse v0.1.0 Mac (unsigned)
-          releaseBody: 'Apple Silicon macOS DMG. Unsigned: right-click the app and choose Open on first launch. The Python service is bundled. OpenCode must be installed and logged in separately for the local engine; otherwise configure an API key.'
-          releaseDraft: false
-          prerelease: true
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create v0.1.1-mac ui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg \
+            --title 'Instinct Muse v0.1.1 Mac (ad-hoc signed)' --prerelease \
+            --notes 'Apple Silicon only. Ad-hoc signed, not notarized: right-click Open or allow in Privacy & Security on first launch. Bundled service verified from packaged app. OpenCode must be installed and logged in for local chat.'
