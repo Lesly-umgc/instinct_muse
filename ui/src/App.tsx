@@ -25,7 +25,9 @@ const NAV: { id: Screen; label: string; Icon: () => JSX.Element }[] = [
 export default function App() {
   const [screen, setScreen] = useState<Screen>("chat");
   useEffect(() => {
-    api.config().then((c) => {
+    import("./api").then(({ waitForService }) =>
+      waitForService(60).then(() => api.config())
+    ).then((c) => {
       const valid: Screen[] = ["chat", "search", "feed", "ideas", "goals", "library"];
       if (valid.includes(c.initial_screen as Screen)) setScreen(c.initial_screen as Screen);
     }).catch(() => {});
