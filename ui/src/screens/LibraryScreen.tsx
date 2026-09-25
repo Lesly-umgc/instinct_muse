@@ -89,7 +89,7 @@ export default function LibraryScreen() {
           </div>
         </header>
         <div className="page-body library">
-          {error && <p className="dim">{error}</p>}
+          {error && <div className="error-banner" role="alert">{error}</div>}
           {recent && (
             <section>
               <h2 className="category-heading">Recent</h2>

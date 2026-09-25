@@ -34,7 +34,7 @@ export default function FeedScreen() {
         </button>
       </header>
       <div className="page-body feed">
-        {error && <p className="dim">{error}</p>}
+        {error && <div className="error-banner" role="alert">{error}</div>}
         {editions.length === 0 && !error && (
           <div className="empty-state">
             <h3>No editions yet</h3>

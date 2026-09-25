@@ -52,7 +52,7 @@ export default function IdeasScreen() {
         </div>
       </header>
       <div className="page-body ideas">
-        {error && <p className="dim">{error}</p>}
+        {error && <div className="error-banner" role="alert">{error}</div>}
         {ideas.length === 0 && !error && (
           <div className="empty-state">
             <h3>No ideas yet</h3>

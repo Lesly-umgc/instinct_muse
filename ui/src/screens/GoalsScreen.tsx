@@ -84,7 +84,7 @@ export default function GoalsScreen() {
         <button className="icon-btn" aria-label="More"><DotsIcon /></button>
       </header>
       <div className="page-body goals">
-        {error && <p className="dim">{error}</p>}
+        {error && <div className="error-banner" role="alert">{error}</div>}
         {tracking.length > 0 && (
           <section className="goal-group">
             <h2 className="group-label tracking">Tracking</h2>

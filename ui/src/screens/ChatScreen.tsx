@@ -317,7 +317,7 @@ export default function ChatScreen() {
           <strong>App service: {serviceState}</strong> - {serviceOrigin}
           <div>Logs: ~/.instinct_muse/desktop.log and ~/.instinct_muse/service.log</div>
           {engines.map((e) => <div key={e.id}>{e.name}: {e.available ? `ready (${e.detail})` : e.reason || "unavailable"}</div>)}
-          {error && <div>{error}</div>}
+          {error && <div className="error-banner" role="alert">{error}</div>}
         </section>}
         <div className="messages">
           <div className="msg-column">
@@ -342,7 +342,7 @@ export default function ChatScreen() {
                   {showTs && <div className="msg-ts">{fmtTs(m.ts!)}</div>}
                   <div className={`card ${m.role} ${m.streaming ? "streaming" : ""}`}>
                     {m.content}
-                    {m.streaming && <span className="ts">...</span>}
+                    {m.streaming && <span className="stream-cursor" aria-hidden="true" />}
                   </div>
                 </div>
               );
@@ -362,7 +362,12 @@ export default function ChatScreen() {
                 )}
               </div>
             ))}
-            {thinking && <div className="card assistant thinking">Thinking... (slow models can take a minute or two)</div>}
+            {thinking && (
+              <div className="card assistant thinking">
+                <span className="thinking-dots" aria-hidden="true"><i /><i /><i /></span>
+                Muse is thinking - free models can take a minute or two
+              </div>
+            )}
             {error && <div className="card assistant">Error: {error}</div>}
             <div ref={bottomRef} />
           </div>
