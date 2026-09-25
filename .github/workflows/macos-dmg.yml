@@ -31,6 +31,7 @@ jobs:
           pip install . pyinstaller
           cd ui && npm ci && npm run build && cd ..
           pyinstaller --onefile --clean --name muse-service --add-data 'ui/dist:ui/dist' --collect-all uvicorn --collect-all pydantic --collect-all pydantic_settings --collect-all fastapi --collect-all starlette app/desktop.py
+          mkdir -p ui/src-tauri/binaries
           cp dist/muse-service ui/src-tauri/binaries/muse-service-aarch64-apple-darwin
           chmod +x ui/src-tauri/binaries/muse-service-aarch64-apple-darwin
       - name: Build and publish unsigned DMG
