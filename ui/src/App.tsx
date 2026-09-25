@@ -41,7 +41,7 @@ export default function App() {
     import("./api").then(({ waitForService }) =>
       waitForService(60).then(() => api.config())
     ).then((c) => {
-      const valid: Screen[] = ["chat", "search", "feed", "ideas", "goals", "library"];
+      const valid: Screen[] = ["chat", "search", "feed", "ideas", "goals", "library", "settings"];
       if (valid.includes(c.initial_screen as Screen)) setScreen(c.initial_screen as Screen);
     }).catch(() => {});
   }, []);
