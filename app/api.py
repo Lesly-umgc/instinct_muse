@@ -520,6 +520,16 @@ async def refresh_feed() -> dict:
 
 
 async def _generate_feed() -> None:
+    import logging
+    for attempt in (1, 2):
+        try:
+            await _generate_feed_once()
+            return
+        except Exception:
+            logging.getLogger("muse.feed").warning("feed generation attempt %s failed", attempt, exc_info=True)
+
+
+async def _generate_feed_once() -> None:
     import json as _json
     import re as _re
     engine = hub.engines.get(settings.default_engine)

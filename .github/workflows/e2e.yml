@@ -179,15 +179,17 @@ jobs:
           async def go(cid):
               try:
                   async with websockets.connect("ws://127.0.0.1:18764/ws/conversations/" + cid) as ws:
-                      await ws.send(json.dumps({"type": "message", "text": "Count from 1 to 40, one number per line."}))
+                      await ws.send(json.dumps({"type": "message", "text": "Count from 1 to 200, one number per line."}))
                       await asyncio.sleep(90)
               except Exception as e:
                   print("stream prompt failed:", e)
           asyncio.run(go(sys.argv[1]))
           PYEOF
-            sleep 3
+            sleep 1.5
+            screencapture -x /tmp/shots/ui-chat-thinking.png || echo 'thinking shot failed'
+            sleep 5
             screencapture -x /tmp/shots/ui-chat-streaming.png || echo 'stream shot failed'
-            sleep 20
+            sleep 25
           fi
           # error banner
           pkill -f 'Instinct Muse' || true
@@ -234,9 +236,10 @@ jobs:
           MUSE_INITIAL_SCREEN=feed "$bin" >/dev/null 2>&1 &
           sleep 6
           curl -sf -X POST $base/api/feed/refresh || true
-          for i in $(seq 1 30); do
+          for i in $(seq 1 48); do
             n=$(curl -sf $base/api/feed | /tmp/e2e-venv/bin/python -c 'import sys,json; print(len(json.load(sys.stdin)["editions"]))' 2>/dev/null || echo 0)
             [ "$n" -gt 0 ] && break
+            [ "$i" = 24 ] && curl -sf -X POST $base/api/feed/refresh || true
             sleep 5
           done
           echo "feed editions: $n"
