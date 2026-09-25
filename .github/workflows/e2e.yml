@@ -154,11 +154,15 @@ jobs:
             screencapture -x "/tmp/shots/ui-$scr.png" || echo "screencapture $scr failed"
           done
           pkill -f 'Instinct Muse' || true
+      - name: Collect service logs
+        if: always()
+        run: cp /Users/runner/.instinct_muse/*.log /tmp/shots/ 2>/dev/null || true
       - name: Upload screenshots and logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-evidence
+          include-hidden-files: true
           path: |
             /tmp/shots/
             /Users/runner/.instinct_muse/*.log
