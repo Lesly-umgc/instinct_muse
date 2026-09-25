@@ -1,0 +1,26 @@
+services:
+  gateway:
+    build: .
+    env_file: .env
+    ports: ["8000:8000"]
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+    depends_on: [db, sandbox, browser]
+  sandbox:
+    build: ./sandbox
+    container_name: muse-sandbox
+    network_mode: none        # no direct internet; route through the egress gate later
+    read_only: false
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+  browser:
+    image: mcr.microsoft.com/playwright/python:v1.44.0-jammy
+    working_dir: /app
+    volumes: [".:/app"]
+    command: sh -c "pip install -e .[browser] && uvicorn browser.worker:app --host 0.0.0.0 --port 8100"
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: muse
+      POSTGRES_PASSWORD: muse
+      POSTGRES_DB: muse
+    ports: ["5432:5432"]
