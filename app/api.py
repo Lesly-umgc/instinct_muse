@@ -318,6 +318,7 @@ def get_config():
     return {
         "initial_screen": os.environ.get("MUSE_INITIAL_SCREEN", ""),
         "initial_chat": os.environ.get("MUSE_INITIAL_CHAT", ""),
+        "initial_settings_section": os.environ.get("MUSE_SETTINGS_SECTION", ""),
         "version": settings.app_version,
         "data_dir": str(Path.home() / ".instinct_muse"),
     }

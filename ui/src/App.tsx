@@ -26,6 +26,7 @@ const NAV: { id: Screen; label: string; Icon: () => JSX.Element }[] = [
 export default function App() {
   const [screen, setScreen] = useState<Screen>("chat");
   const [initialChat, setInitialChat] = useState("");
+  const [settingsSection, setSettingsSection] = useState("");
   useEffect(() => {
     const order: Screen[] = ["chat", "search", "feed", "ideas", "goals", "library"];
     const onKey = (e: KeyboardEvent) => {
@@ -45,6 +46,7 @@ export default function App() {
       const valid: Screen[] = ["chat", "search", "feed", "ideas", "goals", "library", "settings"];
       if (valid.includes(c.initial_screen as Screen)) setScreen(c.initial_screen as Screen);
       if (c.initial_chat) setInitialChat(c.initial_chat);
+      if (c.initial_settings_section) setSettingsSection(c.initial_settings_section);
     }).catch(() => {});
   }, []);
   return (
@@ -79,7 +81,7 @@ export default function App() {
       {screen === "ideas" && <IdeasScreen />}
       {screen === "goals" && <GoalsScreen />}
       {screen === "library" && <LibraryScreen />}
-      {screen === "settings" && <SettingsScreen />}
+      {screen === "settings" && <SettingsScreen initialSection={settingsSection} />}
     </div>
   );
 }

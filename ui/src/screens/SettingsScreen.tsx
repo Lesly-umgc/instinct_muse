@@ -23,8 +23,9 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: "legal", label: "Legal" },
 ];
 
-export default function SettingsScreen() {
-  const [section, setSection] = useState<Section>("general");
+export default function SettingsScreen({ initialSection }: { initialSection?: string }) {
+  const valid = SECTIONS.some((s) => s.id === initialSection);
+  const [section, setSection] = useState<Section>(valid ? (initialSection as Section) : "general");
   const [config, setConfig] = useState<{ version?: string; data_dir?: string }>({});
   const [engines, setEngines] = useState<EngineStatus[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
