@@ -91,7 +91,7 @@ async def stage_main(base: str) -> None:
 
     status, models = req(base, "GET", "/api/models?engine=opencode_server", timeout=120)
     mlist = models.get("models", []) if status == 200 else []  # type: ignore[union-attr]
-    spark = [m for m in mlist if m.get("model") == "muse-spark-1.3-contributor-free"]
+    spark = [m for m in mlist if m.get("model_id") == "muse-spark-1.3-contributor-free"]
     check("Muse Spark 1.3 Free listed", bool(spark),
           spark[0]["label"] if spark else f"{len(mlist)} models, none matched")
 
@@ -111,7 +111,7 @@ async def stage_main(base: str) -> None:
 
     status, conv = req(base, "POST", "/api/conversations",
                        {"title": "New chat", "engine": "opencode_server",
-                        "model": "muse-spark-1.3-contributor-free"})
+                        "model": "opencode/muse-spark-1.3-contributor-free"})
     cid = conv.get("id") if status == 201 else None  # type: ignore[union-attr]
     check("create conversation", status == 201 and bool(cid), str(conv)[:120])
 
@@ -153,7 +153,7 @@ async def stage_arm_restart(base: str) -> None:
     check("service healthy", await wait_health(base), base)
     status, conv = req(base, "POST", "/api/conversations",
                        {"title": "e2e-restart", "engine": "opencode_server",
-                        "model": "muse-spark-1.3-contributor-free"})
+                        "model": "opencode/muse-spark-1.3-contributor-free"})
     cid = conv.get("id") if status == 201 else None  # type: ignore[union-attr]
     check("restart chat created", bool(cid), str(conv)[:120])
     with open("/tmp/e2e_restart_cid", "w") as f:
