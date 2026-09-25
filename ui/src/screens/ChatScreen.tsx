@@ -58,10 +58,6 @@ export default function ChatScreen({ initialChatId }: { initialChatId?: string }
         api.conversations().then((r) => {
           if (cancelled) return;
           setConversations(r.conversations);
-          if (initialChatId) {
-            const target = r.conversations.find((c) => c.id === initialChatId);
-            if (target) openConversationRef.current(target);
-          }
         }).catch((e) => setError(String(e)));
         api.pendingApprovals().then((r) => { if (!cancelled) setApprovals(r.approvals); }).catch(() => {});
       } catch (e) {
@@ -96,6 +92,7 @@ export default function ChatScreen({ initialChatId }: { initialChatId?: string }
     api.conversations().then((r) => setConversations(r.conversations)).catch(() => {}), []);
 
   const openConversationRef = useRef((conv: Conversation) => { void conv; });
+  const initialChatDone = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [attaching, setAttaching] = useState(false);
   const onAttach = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -179,6 +176,15 @@ export default function ChatScreen({ initialChatId }: { initialChatId?: string }
     });
   }, [refreshConversations]);
   openConversationRef.current = openConversation;
+
+  useEffect(() => {
+    if (!initialChatId || initialChatDone.current) return;
+    const target = conversations.find((c) => c.id === initialChatId);
+    if (target) {
+      initialChatDone.current = true;
+      openConversation(target);
+    }
+  }, [initialChatId, conversations, openConversation]);
 
   useEffect(() => () => wsRef.current?.close(), []);
 
