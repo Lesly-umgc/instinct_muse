@@ -164,6 +164,22 @@ class Store:
         else:
             self._exec("UPDATE conversations SET updated_at=? WHERE id=?", (_now(), cid))
 
+    # Data controls -----------------------------------------------------
+    def export_data(self) -> dict[str, Any]:
+        return {
+            "conversations": self._rows("SELECT * FROM conversations"),
+            "messages": self._rows("SELECT * FROM messages"),
+            "artifacts": self._rows("SELECT * FROM artifacts"),
+            "approvals": self._rows("SELECT * FROM approvals"),
+            "goals": self._rows("SELECT * FROM goals"),
+            "ideas": self._rows("SELECT * FROM ideas"),
+        }
+
+    def reset_data(self) -> None:
+        for table in ("messages", "approvals", "conversations", "artifacts",
+                      "goals", "feed_editions", "feed_items", "ideas", "events"):
+            self._exec(f"DELETE FROM {table}")
+
     # Messages ----------------------------------------------------------
     def add_message(self, cid: str, role: str, content: str) -> dict[str, Any]:
         mid, ts = _uid(), _now()

@@ -98,4 +98,4 @@ export interface SearchResult {
   snippet: string;
 }
 
-export type Screen = "chat" | "search" | "feed" | "ideas" | "goals" | "library";
+export type Screen = "chat" | "search" | "feed" | "ideas" | "goals" | "library" | "settings";

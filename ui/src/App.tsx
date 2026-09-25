@@ -7,6 +7,7 @@ import IdeasScreen from "./screens/IdeasScreen";
 import GoalsScreen from "./screens/GoalsScreen";
 import LibraryScreen from "./screens/LibraryScreen";
 import SearchScreen from "./screens/SearchScreen";
+import SettingsScreen from "./screens/SettingsScreen";
 import AgentAvatar from "./components/AgentAvatar";
 import {
   ChatIcon, SearchIcon, FeedIcon, IdeasIcon, GoalsIcon, LibraryIcon,
@@ -24,6 +25,18 @@ const NAV: { id: Screen; label: string; Icon: () => JSX.Element }[] = [
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("chat");
+  useEffect(() => {
+    const order: Screen[] = ["chat", "search", "feed", "ideas", "goals", "library"];
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === ",") { e.preventDefault(); setScreen("settings"); return; }
+      if (e.key.toLowerCase() === "k") { e.preventDefault(); setScreen("search"); return; }
+      const n = Number(e.key);
+      if (n >= 1 && n <= order.length) { e.preventDefault(); setScreen(order[n - 1]); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   useEffect(() => {
     import("./api").then(({ waitForService }) =>
       waitForService(60).then(() => api.config())
@@ -54,7 +67,7 @@ export default function App() {
         <button className="rail-avatar" title="You" aria-label="You">
           <AgentAvatar size={34} />
         </button>
-        <button title="Menu" aria-label="Menu">
+        <button title="Settings" aria-label="Settings" onClick={() => setScreen("settings")}>
           <MenuIcon />
         </button>
       </nav>
@@ -64,6 +77,7 @@ export default function App() {
       {screen === "ideas" && <IdeasScreen />}
       {screen === "goals" && <GoalsScreen />}
       {screen === "library" && <LibraryScreen />}
+      {screen === "settings" && <SettingsScreen />}
     </div>
   );
 }

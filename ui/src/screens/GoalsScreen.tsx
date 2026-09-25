@@ -13,6 +13,8 @@ export default function GoalsScreen() {
   const [creating, setCreating] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
   const [error, setError] = useState("");
+  const [detail, setDetail] = useState<Goal | null>(null);
+  const [statusDraft, setStatusDraft] = useState("");
 
   const load = useCallback(() => {
     api.goals().then((r) => setGoals(r.goals)).catch((e) => setError(String(e)));
@@ -23,6 +25,25 @@ export default function GoalsScreen() {
   const plain = goals.filter((g) => g.group_name !== "Tracking");
 
   const toggle = (g: Goal) => api.updateGoal(g.id, { done: !g.done }).then(load);
+
+  const openDetail = (g: Goal) => {
+    setDetail(g);
+    setStatusDraft(g.status_line ?? "");
+  };
+  const saveDetail = () => {
+    if (!detail) return;
+    api.updateGoal(detail.id, { status_line: statusDraft.trim() }).then(() => {
+      setDetail(null);
+      load();
+    }).catch((e) => setError(String(e)));
+  };
+  const deleteDetail = () => {
+    if (!detail) return;
+    api.deleteGoal(detail.id).then(() => {
+      setDetail(null);
+      load();
+    }).catch((e) => setError(String(e)));
+  };
 
   const create = () => {
     if (!newTitle.trim() || !creating) return;
@@ -44,11 +65,11 @@ export default function GoalsScreen() {
       >
         {goal.done && <CheckIcon />}
       </button>
-      <div className="goal-text">
+      <div className="goal-text" onClick={() => openDetail(goal)} role="button" tabIndex={0}>
         <h3>{goal.title}</h3>
         {goal.status_line && <p>{goal.status_line}</p>}
       </div>
-      <button className="icon-btn small" aria-label="Goal menu"><DotsIcon /></button>
+      <button className="icon-btn small" aria-label="Goal details" onClick={() => openDetail(goal)}><DotsIcon /></button>
     </div>
   );
 
@@ -106,6 +127,28 @@ export default function GoalsScreen() {
             <button className="primary-btn" onClick={create} disabled={!newTitle.trim()}>
               Create goal
             </button>
+          </div>
+        </div>
+      )}
+      {detail && (
+        <div className="modal-backdrop" onClick={() => setDetail(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <button className="close-btn" onClick={() => setDetail(null)} aria-label="Close">x</button>
+            <h3>{detail.title}</h3>
+            <p className="dim">{detail.category}{detail.done ? " - done" : ""}</p>
+            <label className="modal-label">Latest status</label>
+            <textarea
+              className="modal-textarea"
+              value={statusDraft}
+              onChange={(e) => setStatusDraft(e.target.value)}
+              placeholder="Where is this goal at? Muse uses this when it briefs you."
+              rows={3}
+            />
+            <div className="modal-actions">
+              <button className="pill-btn danger-btn" onClick={deleteDetail}>Delete</button>
+              <button className="pill-btn" onClick={() => setDetail(null)}>Cancel</button>
+              <button className="primary-btn" onClick={saveDetail}>Save</button>
+            </div>
           </div>
         </div>
       )}

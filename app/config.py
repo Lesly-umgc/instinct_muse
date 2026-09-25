@@ -8,6 +8,8 @@ class Settings(BaseSettings):
 
     # Engine selection: "opencode_server" (local OpenCode CLI, no API key needed
     # once the CLI is logged in) or "zen_api" (OpenCode Zen API key).
+    app_version: str = "0.1.6"
+
     default_engine: str = "opencode_server"
 
     # OpenCode server adapter. If opencode_server_url is empty, the gateway

@@ -315,7 +315,11 @@ class ApprovalDecision(BaseModel):
 def get_config():
     import os
 
-    return {"initial_screen": os.environ.get("MUSE_INITIAL_SCREEN", "")}
+    return {
+        "initial_screen": os.environ.get("MUSE_INITIAL_SCREEN", ""),
+        "version": settings.app_version,
+        "data_dir": str(Path.home() / ".instinct_muse"),
+    }
 
 
 @router.get("/engines")
@@ -517,6 +521,16 @@ async def _generate_feed() -> None:
         hub.store.add_feed_edition(data.get("label", "Latest"), data.get("items", [])[:5])
     except (ValueError, TypeError):
         return
+
+
+@router.get("/data/export")
+async def export_data() -> dict:
+    return hub.store.export_data()
+
+
+@router.post("/data/reset", status_code=204)
+async def reset_data() -> None:
+    hub.store.reset_data()
 
 
 @router.get("/ideas")
