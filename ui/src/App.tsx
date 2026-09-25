@@ -1,12 +1,20 @@
 import { useState } from "react";
 import type { Screen } from "./types";
 import ChatScreen from "./screens/ChatScreen";
+import FeedScreen from "./screens/FeedScreen";
+import IdeasScreen from "./screens/IdeasScreen";
+import GoalsScreen from "./screens/GoalsScreen";
 import LibraryScreen from "./screens/LibraryScreen";
-import PlaceholderScreen from "./screens/PlaceholderScreen";
-import { ChatIcon, FeedIcon, GoalsIcon, IdeasIcon, LibraryIcon } from "./components/icons";
+import SearchScreen from "./screens/SearchScreen";
+import AgentAvatar from "./components/AgentAvatar";
+import {
+  ChatIcon, SearchIcon, FeedIcon, IdeasIcon, GoalsIcon, LibraryIcon,
+  QuickChatIcon, MenuIcon,
+} from "./components/icons";
 
 const NAV: { id: Screen; label: string; Icon: () => JSX.Element }[] = [
   { id: "chat", label: "Chat", Icon: ChatIcon },
+  { id: "search", label: "Search", Icon: SearchIcon },
   { id: "feed", label: "Feed", Icon: FeedIcon },
   { id: "ideas", label: "Ideas", Icon: IdeasIcon },
   { id: "goals", label: "Goals", Icon: GoalsIcon },
@@ -18,6 +26,10 @@ export default function App() {
   return (
     <div className="app">
       <nav className="rail" aria-label="Main navigation">
+        <button className="quick-chat" title="Quick chat" aria-label="Quick chat"
+          onClick={() => setScreen("chat")}>
+          <QuickChatIcon />
+        </button>
         {NAV.map(({ id, label, Icon }) => (
           <button
             key={id}
@@ -30,27 +42,19 @@ export default function App() {
           </button>
         ))}
         <div className="spacer" />
+        <button className="rail-avatar" title="You" aria-label="You">
+          <AgentAvatar size={34} />
+        </button>
+        <button title="Menu" aria-label="Menu">
+          <MenuIcon />
+        </button>
       </nav>
       {screen === "chat" && <ChatScreen />}
+      {screen === "search" && <SearchScreen />}
+      {screen === "feed" && <FeedScreen />}
+      {screen === "ideas" && <IdeasScreen />}
+      {screen === "goals" && <GoalsScreen />}
       {screen === "library" && <LibraryScreen />}
-      {screen === "feed" && (
-        <PlaceholderScreen
-          title="Feed"
-          body="Scheduled briefings with source links will live here. Coming in phase 2, once goals and scheduling land in the app service."
-        />
-      )}
-      {screen === "ideas" && (
-        <PlaceholderScreen
-          title="Ideas"
-          body="Personalized suggestions from your memory and goals. Coming in phase 2."
-        />
-      )}
-      {screen === "goals" && (
-        <PlaceholderScreen
-          title="Goals"
-          body="Durable goal tracking and the execution queue. Coming in phase 2 - the records live in the app service, not the engine, so they survive engine switches."
-        />
-      )}
     </div>
   );
 }

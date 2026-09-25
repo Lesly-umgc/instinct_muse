@@ -1,4 +1,4 @@
-import type { Approval, Artifact, Conversation, EngineStatus, ModelInfo } from "./types";
+import type { Approval, Artifact, Conversation, EngineStatus, FeedEdition, Goal, Idea, ModelInfo, SearchResult } from "./types";
 
 const desktop = "__TAURI_INTERNALS__" in window;
 const base = desktop ? "http://127.0.0.1:18764" : "";
@@ -50,6 +50,33 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ decision }),
     }),
+
+  goals: () => req<{ goals: Goal[] }>("/api/goals"),
+  createGoal: (title: string, category: string) =>
+    req<Goal>("/api/goals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, category }),
+    }),
+  updateGoal: (id: string, patch: Partial<Pick<Goal, "done" | "status_line" | "title">>) =>
+    req<Goal>(`/api/goals/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
+  deleteGoal: (id: string) => req<void>(`/api/goals/${id}`, { method: "DELETE" }),
+  feed: () => req<{ editions: FeedEdition[] }>("/api/feed"),
+  refreshFeed: () => req<{ ok: boolean }>("/api/feed/refresh", { method: "POST" }),
+  loveFeedItem: (id: string, loved: boolean) =>
+    req<{ ok: boolean }>(`/api/feed/items/${id}/love`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ loved }),
+    }),
+  ideas: () => req<{ ideas: Idea[] }>("/api/ideas"),
+  refreshIdeas: () => req<{ ok: boolean }>("/api/ideas/refresh", { method: "POST" }),
+  dismissIdea: (id: string) => req<void>(`/api/ideas/${id}/dismiss`, { method: "POST" }),
+  search: (q: string) => req<{ results: SearchResult[] }>(`/api/search?q=${encodeURIComponent(q)}`),
 };
 
 export function conversationSocket(

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, conversationSocket, serviceOrigin, waitForService } from "../api";
 import type { Approval, Conversation, EngineStatus, Message, ModelInfo } from "../types";
+import AgentAvatar from "../components/AgentAvatar";
+import {
+  SearchIcon, DotsIcon, PlusIcon, MicIcon, SendIcon, GiftIcon,
+} from "../components/icons";
 
 interface LocalMessage {
   role: string;
@@ -8,6 +12,8 @@ interface LocalMessage {
   ts?: number;
   streaming?: boolean;
 }
+
+const MAIN_CHAT_KEY = "muse.mainChatId";
 
 export default function ChatScreen() {
   const [engines, setEngines] = useState<EngineStatus[]>([]);
@@ -20,6 +26,8 @@ export default function ChatScreen() {
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
+  const [filter, setFilter] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const [thinking, setThinking] = useState(false);
@@ -81,8 +89,6 @@ export default function ChatScreen() {
     api.conversations().then((r) => setConversations(r.conversations)).catch(() => {}), []);
 
   const openConversation = useCallback((conv: Conversation) => {
-    // Already viewing this chat on a live socket: reopening would drop and
-    // re-create the connection for no reason (the churn that lost replies).
     const cur = wsRef.current;
     setActive((prev) => {
       if (prev?.id === conv.id && cur && (cur.readyState === WebSocket.OPEN || cur.readyState === WebSocket.CONNECTING)) {
@@ -129,8 +135,6 @@ export default function ChatScreen() {
         }
       });
       ws.onclose = () => {
-        // Unexpected drop (service restart, network blip): reconnect once after
-        // a short pause, but only if this socket is still the current one.
         setTimeout(() => {
           setActive((a) => {
             if (a && a.id === conv.id && wsRef.current === ws && ws.readyState === WebSocket.CLOSED) {
@@ -147,12 +151,29 @@ export default function ChatScreen() {
 
   useEffect(() => () => wsRef.current?.close(), []);
 
-  const newChat = async () => {
-    if (!engine) return;
-    const conv = await api.createConversation("New chat", engine, model || undefined);
+  const newChat = async (title = "New chat") => {
+    if (!engine) return null;
+    const conv = await api.createConversation(title, engine, model || undefined);
     refreshConversations();
     setMessages([]);
     openConversation(conv);
+    return conv;
+  };
+
+  const mainChatId = localStorage.getItem(MAIN_CHAT_KEY);
+  const mainChat = conversations.find((c) => c.id === mainChatId)
+    ?? conversations.find((c) => c.title === "Main chat");
+  const sideChats = conversations
+    .filter((c) => c.id !== mainChat?.id)
+    .filter((c) => !filter || c.title.toLowerCase().includes(filter.toLowerCase()));
+
+  const openMainChat = async () => {
+    if (mainChat) {
+      openConversation(mainChat);
+      return;
+    }
+    const conv = await newChat("Main chat");
+    if (conv) localStorage.setItem(MAIN_CHAT_KEY, conv.id);
   };
 
   const deleteChat = async (conv: Conversation) => {
@@ -170,12 +191,9 @@ export default function ChatScreen() {
     refreshConversations();
   };
 
-  // Retry delivery against a live socket for ~10s, reconnecting as needed,
-  // so a message is never silently dropped by connection churn. If it still
-  // cannot go out, say so visibly instead of pretending it was sent.
   const deliver = (cid: string, payload: string, attempt: number) => {
     const current = activeRef.current;
-    if (!current || current.id !== cid) return; // user moved on before it went out
+    if (!current || current.id !== cid) return;
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(payload);
@@ -203,86 +221,132 @@ export default function ChatScreen() {
   };
 
   const availableEngines = engines.filter((e) => !e.id.startsWith("cli:"));
-  const cliNotes = engines.filter((e) => e.id.startsWith("cli:") && !e.available);
+
+  const fmtTs = (ts: number) => {
+    const d = new Date(ts * 1000);
+    const today = new Date();
+    const sameDay = d.toDateString() === today.toDateString();
+    const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return sameDay ? time : `${d.toLocaleDateString([], { day: "numeric", month: "short" })} at ${time}`;
+  };
+
+  const ChatRow = ({ c, label }: { c?: Conversation; label?: string }) => (
+    <div
+      className={`side-item ${active?.id === c?.id ? "active" : ""}`}
+      onClick={() => (c ? openConversation(c) : openMainChat())}
+    >
+      <span className="side-title">{c ? c.title : label}</span>
+      {c && (confirmDeleteId === c.id ? (
+        <span className="del-confirm" onClick={(e) => e.stopPropagation()}>
+          <button className="del-yes" onClick={() => void deleteChat(c)}>Delete</button>
+          <button className="del-no" onClick={() => setConfirmDeleteId(null)}>Keep</button>
+        </span>
+      ) : (
+        <button
+          className="del-chat"
+          title="Delete chat"
+          aria-label={`Delete chat ${c.title}`}
+          onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(c.id); }}
+        >x</button>
+      ))}
+    </div>
+  );
 
   return (
     <>
       <div className="sidebar">
-        <div className="sidebar-header">
-          <h2>Chats</h2>
-          <button className="new-chat-btn" onClick={newChat} disabled={!engine || serviceState !== "ready"}>+ New</button>
+        <div className="sidebar-search">
+          <div className="search-field">
+            <SearchIcon />
+            <input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Search"
+              aria-label="Search chats"
+            />
+          </div>
+          <div className="menu-wrap">
+            <button className="icon-btn" aria-label="Chat options" onClick={() => setMenuOpen(!menuOpen)}>
+              <DotsIcon />
+            </button>
+            {menuOpen && (
+              <div className="menu-pop">
+                <label>
+                  Engine
+                  <select value={engine} onChange={(e) => setEngine(e.target.value)} aria-label="Engine">
+                    {availableEngines.map((e) => (
+                      <option key={e.id} value={e.id} disabled={!e.available}>
+                        {e.name}{e.available ? "" : ` - ${e.reason}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Model
+                  <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model" disabled={models.length === 0}>
+                    {models.length === 0 && <option value="">No models</option>}
+                    {models.map((m) => (
+                      <option key={`${m.provider_id}/${m.model_id}`} value={`${m.provider_id}/${m.model_id}`}>
+                        {m.label}{m.is_default ? " (default)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button className="ghost-btn" onClick={() => { setDiagnosticsOpen(!diagnosticsOpen); setMenuOpen(false); }}>
+                  Diagnostics
+                </button>
+              </div>
+            )}
+          </div>
         </div>
         <div className="sidebar-list">
-          {conversations.map((c) => (
-            <div
-              key={c.id}
-              className={`side-item ${active?.id === c.id ? "active" : ""}`}
-              onClick={() => openConversation(c)}
-            >
-              <span className="side-title">{c.title}</span>
-              {confirmDeleteId === c.id ? (
-                <span className="del-confirm" onClick={(e) => e.stopPropagation()}>
-                  <button className="del-yes" onClick={() => void deleteChat(c)}>Delete</button>
-                  <button className="del-no" onClick={() => setConfirmDeleteId(null)}>Keep</button>
-                </span>
-              ) : (
-                <button
-                  className="del-chat"
-                  title="Delete chat"
-                  aria-label={`Delete chat ${c.title}`}
-                  onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(c.id); }}
-                >×</button>
-              )}
-            </div>
-          ))}
-          {conversations.length === 0 && (
-            <div className="side-item">No chats yet. Start one.</div>
-          )}
+          <ChatRow c={mainChat} label="Main chat" />
+          <div className="side-section">
+            <span>Side chats</span>
+            <button className="icon-btn small" onClick={() => void newChat()} disabled={!engine || serviceState !== "ready"}
+              title="New side chat" aria-label="New side chat">
+              <PlusIcon />
+            </button>
+          </div>
+          {sideChats.map((c) => <ChatRow key={c.id} c={c} />)}
+          {sideChats.length === 0 && <div className="side-empty dim">No side chats yet.</div>}
         </div>
       </div>
       <div className="main">
-        <div className="topbar">
-          <select value={engine} onChange={(e) => setEngine(e.target.value)} aria-label="Engine">
-            {availableEngines.map((e) => (
-              <option key={e.id} value={e.id} disabled={!e.available}>
-                {e.name}{e.available ? "" : ` - ${e.reason}`}
-              </option>
-            ))}
-          </select>
-          <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model" disabled={models.length === 0}>
-            {models.length === 0 && <option value="">No models (engine unavailable)</option>}
-            {models.map((m) => (
-              <option key={`${m.provider_id}/${m.model_id}`} value={`${m.provider_id}/${m.model_id}`}>
-                {m.label}{m.is_default ? " (default)" : ""}
-              </option>
-            ))}
-          </select>
-          <button className="diagnostics-toggle" onClick={() => setDiagnosticsOpen(!diagnosticsOpen)}>Diagnostics</button>
-          {cliNotes.map((n) => (
-            <span key={n.id} className="engine-note" title={n.reason}>{n.name}: not detected</span>
-          ))}
-        </div>
         {diagnosticsOpen && <section className="diagnostics" aria-label="Diagnostics">
-          <strong>App service: {serviceState}</strong> · {serviceOrigin}
+          <strong>App service: {serviceState}</strong> - {serviceOrigin}
           <div>Logs: ~/.instinct_muse/desktop.log and ~/.instinct_muse/service.log</div>
           {engines.map((e) => <div key={e.id}>{e.name}: {e.available ? `ready (${e.detail})` : e.reason || "unavailable"}</div>)}
           {error && <div>{error}</div>}
         </section>}
         <div className="messages">
           <div className="msg-column">
+            <div className="chat-agent-header">
+              <AgentAvatar size={56} />
+              <span className="agent-name">Muse</span>
+            </div>
+            <button className="invite-btn" aria-label="Invite friends">
+              <GiftIcon /> <span>Invite</span>
+            </button>
             {!active && (
               <div className="empty-state">
                 <h3>Instinct Muse</h3>
-                <p>Pick an engine and start a chat. Detected agents on this machine light up automatically - no API key needed when the agent CLI is already logged in.</p>
+                <p>Open the main chat or start a side chat. Detected agents on this machine light up automatically - no API key needed when the agent CLI is already logged in.</p>
               </div>
             )}
-            {messages.map((m, i) => (
-              <div key={i} className={`bubble ${m.role}`}>
-                {m.content}
-                {m.streaming && <span className="ts">...</span>}
-                {m.ts && <span className="ts">{new Date(m.ts * 1000).toLocaleTimeString()}</span>}
-              </div>
-            ))}
+            {messages.map((m, i) => {
+              const prev = messages[i - 1];
+              const showTs = m.ts && (!prev?.ts || m.ts - prev.ts > 300);
+              return (
+                <div key={i} className="msg-block">
+                  {showTs && <div className="msg-ts">{fmtTs(m.ts!)}</div>}
+                  <div className={`card ${m.role} ${m.streaming ? "streaming" : ""}`}>
+                    {m.content}
+                    {m.streaming && <span className="ts">...</span>}
+                  </div>
+                </div>
+              );
+            })}
             {approvals.filter((a) => !active || a.conversation_id === active.id).map((a) => (
               <div key={a.id} className={`approval-card ${a.status !== "pending" ? "resolved" : ""}`}>
                 <div className="action">Approval needed: {a.action}</div>
@@ -298,16 +362,19 @@ export default function ChatScreen() {
                 )}
               </div>
             ))}
-            {thinking && <div className="bubble assistant thinking">Thinking... (slow models can take a minute or two)</div>}
-            {error && <div className="bubble assistant">Error: {error}</div>}
+            {thinking && <div className="card assistant thinking">Thinking... (slow models can take a minute or two)</div>}
+            {error && <div className="card assistant">Error: {error}</div>}
             <div ref={bottomRef} />
           </div>
         </div>
         <div className="composer">
           <div className="composer-inner">
+            <button className="composer-plus" aria-label="Attach" disabled={!active}>
+              <PlusIcon />
+            </button>
             <textarea
               rows={1}
-              placeholder={active ? "Message..." : "Start a new chat first"}
+              placeholder={active ? "Message" : "Open a chat first"}
               value={draft}
               disabled={!active}
               onChange={(e) => setDraft(e.target.value)}
@@ -318,7 +385,12 @@ export default function ChatScreen() {
                 }
               }}
             />
-            <button onClick={send} disabled={!active || !draft.trim()} aria-label="Send">↑</button>
+            <button className="composer-mic" aria-label="Dictate" disabled={!active}>
+              <MicIcon />
+            </button>
+            <button className="composer-send" onClick={send} disabled={!active || !draft.trim()} aria-label="Send">
+              <SendIcon />
+            </button>
           </div>
         </div>
       </div>

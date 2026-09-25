@@ -54,4 +54,48 @@ export interface Approval {
   resolved_at: number | null;
 }
 
-export type Screen = "chat" | "feed" | "ideas" | "goals" | "library";
+export interface Goal {
+  id: string;
+  title: string;
+  status_line: string;
+  group_name: string;
+  category: string;
+  done: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface FeedItem {
+  id: string;
+  edition_id: string;
+  title: string;
+  body: string;
+  links: { label: string; url: string }[];
+  loved: boolean;
+  created_at: number;
+}
+
+export interface FeedEdition {
+  id: string;
+  label: string;
+  created_at: number;
+  items?: FeedItem[];
+}
+
+export interface Idea {
+  id: string;
+  title: string;
+  body: string;
+  category: string;
+  dismissed: boolean;
+  created_at: number;
+}
+
+export interface SearchResult {
+  kind: string;
+  id: string;
+  title: string;
+  snippet: string;
+}
+
+export type Screen = "chat" | "search" | "feed" | "ideas" | "goals" | "library";

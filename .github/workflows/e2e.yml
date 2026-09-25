@@ -93,7 +93,10 @@ jobs:
           mount_dir="$RUNNER_TEMP/muse-mounted"
           mkdir -p "$mount_dir"
           hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" "${dmg[0]}"
-          cp -R "$mount_dir/Instinct Muse.app" "$HOME/Applications/" 2>/dev/null || { mkdir -p "$HOME/Applications"; cp -R "$mount_dir/Instinct Muse.app" "$HOME/Applications/"; }
+          ls -la "$mount_dir"
+          ls -la "$mount_dir/Instinct Muse.app/Contents" || echo 'APP CONTENTS MISSING IN DMG'
+          mkdir -p "$HOME/Applications"
+          ditto "$mount_dir/Instinct Muse.app" "$HOME/Applications/Instinct Muse.app"
           hdiutil detach "$mount_dir"
           xattr -dr com.apple.quarantine "$HOME/Applications/Instinct Muse.app" 2>/dev/null || true
           ls "$HOME/Applications/Instinct Muse.app/Contents/MacOS"

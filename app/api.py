@@ -364,6 +364,156 @@ async def decide_approval(aid: str, body: ApprovalDecision) -> dict:
     return hub.store.resolve_approval(aid, status)  # type: ignore[return-value]
 
 
+
+
+class GoalBody(BaseModel):
+    title: str
+    category: str = ""
+    status_line: str = ""
+    group_name: str = "Goals"
+
+
+class GoalPatch(BaseModel):
+    done: bool | None = None
+    status_line: str | None = None
+    title: str | None = None
+
+
+@router.get("/goals")
+async def list_goals() -> dict:
+    return {"goals": hub.store.list_goals()}
+
+
+@router.post("/goals", status_code=201)
+async def create_goal(body: GoalBody) -> dict:
+    return hub.store.create_goal(body.title, body.category, body.status_line, body.group_name)
+
+
+@router.patch("/goals/{gid}")
+async def update_goal(gid: str, body: GoalPatch) -> dict:
+    goal = hub.store.update_goal(gid, done=body.done, status_line=body.status_line, title=body.title)
+    if not goal:
+        raise HTTPException(404, "goal not found")
+    return goal
+
+
+@router.delete("/goals/{gid}", status_code=204)
+async def delete_goal(gid: str) -> None:
+    hub.store.delete_goal(gid)
+
+
+@router.get("/feed")
+async def list_feed() -> dict:
+    return {"editions": hub.store.list_feed()}
+
+
+@router.post("/feed/items/{item_id}/love")
+async def love_feed_item(item_id: str, body: dict) -> dict:
+    hub.store.set_feed_item_loved(item_id, bool(body.get("loved", True)))
+    return {"ok": True}
+
+
+@router.post("/feed/refresh", status_code=202)
+async def refresh_feed() -> dict:
+    """Ask the engine for a fresh edition; stored as records, so the feed
+    survives restarts and engine switches."""
+    import asyncio as _asyncio
+    _asyncio.create_task(_generate_feed())
+    return {"ok": True}
+
+
+async def _generate_feed() -> None:
+    import json as _json
+    import re as _re
+    engine = hub.engines.get(settings.default_engine)
+    if not engine:
+        return
+    sid = await engine.create_session("Feed edition")
+    prompt = (
+        "Write one short personal morning briefing edition for the app user. "
+        "Return ONLY a JSON object: {\"label\": \"<weekday morning/afternoon/evening>\", "
+        "\"items\": [{\"title\": \"<one-line headline>\", \"body\": \"<3-4 sentence briefing>\", "
+        "\"links\": []}] } with exactly 2 items about technology and personal productivity. "
+        "No markdown, no commentary, JSON only.")
+    await engine.send(sid, prompt)
+    text = ""
+    async for ev in engine.events():
+        if ev.session_id != sid:
+            continue
+        if ev.type == "text_delta":
+            text += ev.text or ""
+        elif ev.type == "message_done":
+            break
+        elif ev.type == "error":
+            return
+    m = _re.search(r"\{.*\}", text, _re.S)
+    if not m:
+        return
+    try:
+        data = _json.loads(m.group(0))
+        hub.store.add_feed_edition(data.get("label", "Latest"), data.get("items", [])[:5])
+    except (ValueError, TypeError):
+        return
+
+
+@router.get("/ideas")
+async def list_ideas() -> dict:
+    return {"ideas": hub.store.list_ideas()}
+
+
+@router.post("/ideas/{iid}/dismiss", status_code=204)
+async def dismiss_idea(iid: str) -> None:
+    hub.store.dismiss_idea(iid)
+
+
+@router.post("/ideas/refresh", status_code=202)
+async def refresh_ideas() -> dict:
+    import asyncio as _asyncio
+    _asyncio.create_task(_generate_ideas())
+    return {"ok": True}
+
+
+async def _generate_ideas() -> None:
+    import json as _json
+    import re as _re
+    engine = hub.engines.get(settings.default_engine)
+    if not engine:
+        return
+    sid = await engine.create_session("Ideas")
+    prompt = (
+        "Suggest 3 genuinely useful things you could do for the app user right now. "
+        "Return ONLY a JSON array: [{\"title\": \"<one line>\", "
+        "\"body\": \"<2-3 sentences on what you would do>\", \"category\": \"Productivity\"}]. "
+        "No markdown, no commentary, JSON only.")
+    await engine.send(sid, prompt)
+    text = ""
+    async for ev in engine.events():
+        if ev.session_id != sid:
+            continue
+        if ev.type == "text_delta":
+            text += ev.text or ""
+        elif ev.type == "message_done":
+            break
+        elif ev.type == "error":
+            return
+    m = _re.search(r"\[.*\]", text, _re.S)
+    if not m:
+        return
+    try:
+        for idea in _json.loads(m.group(0))[:5]:
+            hub.store.add_idea(idea.get("title", ""), idea.get("body", ""),
+                               idea.get("category", ""))
+    except (ValueError, TypeError):
+        return
+
+
+@router.get("/search")
+async def global_search(q: str) -> dict:
+    if not q.strip():
+        return {"results": []}
+    return {"results": hub.store.search(q.strip())}
+
+
 async def conversation_ws(ws: WebSocket, cid: str) -> None:
     if not hub.store.get_conversation(cid):
         await ws.close(code=4404)

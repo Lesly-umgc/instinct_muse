@@ -56,6 +56,42 @@ CREATE TABLE IF NOT EXISTS events (
     payload TEXT NOT NULL,
     created_at REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS goals (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    status_line TEXT NOT NULL DEFAULT '',
+    group_name TEXT NOT NULL DEFAULT 'Goals',
+    category TEXT NOT NULL DEFAULT '',
+    done INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS feed_editions (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS feed_items (
+    id TEXT PRIMARY KEY,
+    edition_id TEXT NOT NULL REFERENCES feed_editions(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    links TEXT NOT NULL DEFAULT '[]',
+    loved INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ideas (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT '',
+    dismissed INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL
+);
 """
 
 
@@ -193,3 +229,112 @@ class Store:
         if conversation_id:
             return self._rows("SELECT * FROM events WHERE conversation_id=? ORDER BY id", (conversation_id,))
         return self._rows("SELECT * FROM events ORDER BY id")
+
+    # Goals -------------------------------------------------------------
+    def create_goal(self, title: str, category: str = "", status_line: str = "",
+                    group_name: str = "Goals") -> dict[str, Any]:
+        gid, ts = _uid(), _now()
+        self._exec(
+            "INSERT INTO goals (id, title, status_line, group_name, category, done, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,0,?,?)", (gid, title, status_line, group_name, category, ts, ts))
+        return self.get_goal(gid)  # type: ignore[return-value]
+
+    def get_goal(self, gid: str) -> dict[str, Any] | None:
+        row = self._one("SELECT * FROM goals WHERE id=?", (gid,))
+        if row:
+            row["done"] = bool(row["done"])
+        return row
+
+    def list_goals(self) -> list[dict[str, Any]]:
+        rows = self._rows("SELECT * FROM goals ORDER BY done, created_at DESC")
+        for r in rows:
+            r["done"] = bool(r["done"])
+        return rows
+
+    def update_goal(self, gid: str, done: bool | None = None,
+                    status_line: str | None = None, title: str | None = None) -> dict[str, Any] | None:
+        goal = self.get_goal(gid)
+        if not goal:
+            return None
+        self._exec(
+            "UPDATE goals SET done=?, status_line=?, title=?, updated_at=? WHERE id=?",
+            (int(done if done is not None else goal["done"]),
+             status_line if status_line is not None else goal["status_line"],
+             title if title is not None else goal["title"], _now(), gid))
+        return self.get_goal(gid)
+
+    def delete_goal(self, gid: str) -> None:
+        self._exec("DELETE FROM goals WHERE id=?", (gid,))
+
+    # Feed ---------------------------------------------------------------
+    def add_feed_edition(self, label: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+        eid, ts = _uid(), _now()
+        self._exec("INSERT INTO feed_editions (id, label, created_at) VALUES (?,?,?)", (eid, label, ts))
+        for item in items:
+            import json as _json
+            self._exec(
+                "INSERT INTO feed_items (id, edition_id, title, body, links, loved, created_at)"
+                " VALUES (?,?,?,?,?,0,?)",
+                (_uid(), eid, item.get("title", ""), item.get("body", ""),
+                 _json.dumps(item.get("links", [])), ts))
+        return self.get_feed_edition(eid)  # type: ignore[return-value]
+
+    def get_feed_edition(self, eid: str) -> dict[str, Any] | None:
+        ed = self._one("SELECT * FROM feed_editions WHERE id=?", (eid,))
+        return ed
+
+    def list_feed(self, limit: int = 20) -> list[dict[str, Any]]:
+        import json as _json
+        editions = self._rows("SELECT * FROM feed_editions ORDER BY created_at DESC LIMIT ?", (limit,))
+        out = []
+        for ed in editions:
+            items = self._rows("SELECT * FROM feed_items WHERE edition_id=? ORDER BY created_at", (ed["id"],))
+            for it in items:
+                it["links"] = _json.loads(it["links"] or "[]")
+                it["loved"] = bool(it["loved"])
+            ed["items"] = items
+            out.append(ed)
+        return out
+
+    def set_feed_item_loved(self, item_id: str, loved: bool) -> None:
+        self._exec("UPDATE feed_items SET loved=? WHERE id=?", (int(loved), item_id))
+
+    # Ideas ---------------------------------------------------------------
+    def add_idea(self, title: str, body: str = "", category: str = "") -> dict[str, Any]:
+        iid, ts = _uid(), _now()
+        self._exec("INSERT INTO ideas (id, title, body, category, dismissed, created_at) VALUES (?,?,?,?,0,?)",
+                   (iid, title, body, category, ts))
+        return self._one("SELECT * FROM ideas WHERE id=?", (iid,))  # type: ignore[return-value]
+
+    def list_ideas(self) -> list[dict[str, Any]]:
+        return self._rows("SELECT * FROM ideas WHERE dismissed=0 ORDER BY created_at DESC")
+
+    def dismiss_idea(self, iid: str) -> None:
+        self._exec("UPDATE ideas SET dismissed=1 WHERE id=?", (iid,))
+
+    # Search --------------------------------------------------------------
+    def search(self, query: str, limit: int = 30) -> list[dict[str, Any]]:
+        like = f"%{query}%"
+        results: list[dict[str, Any]] = []
+        for row in self._rows(
+                "SELECT c.id, c.title, m.content FROM messages m"
+                " JOIN conversations c ON c.id=m.conversation_id"
+                " WHERE m.content LIKE ? ORDER BY m.created_at DESC LIMIT ?", (like, limit)):
+            results.append({"kind": "chat", "id": row["id"], "title": row["title"],
+                            "snippet": row["content"][:160]})
+        for row in self._rows(
+                "SELECT id, title, path FROM artifacts WHERE title LIKE ? OR path LIKE ?"
+                " ORDER BY created_at DESC LIMIT ?", (like, like, limit)):
+            results.append({"kind": "artifact", "id": row["id"], "title": row["title"],
+                            "snippet": row["path"]})
+        for row in self._rows(
+                "SELECT id, title, status_line FROM goals WHERE title LIKE ? OR status_line LIKE ?"
+                " LIMIT ?", (like, like, limit)):
+            results.append({"kind": "goal", "id": row["id"], "title": row["title"],
+                            "snippet": row["status_line"]})
+        for row in self._rows(
+                "SELECT id, title, body FROM ideas WHERE title LIKE ? OR body LIKE ?"
+                " LIMIT ?", (like, like, limit)):
+            results.append({"kind": "idea", "id": row["id"], "title": row["title"],
+                            "snippet": row["body"][:160]})
+        return results[:limit]

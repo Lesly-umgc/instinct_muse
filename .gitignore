@@ -8,3 +8,4 @@ ui/dist/
 ui/src-tauri/target/
 .pytest_cache/
 ui/node_modules/
+ui/tsconfig.tsbuildinfo
