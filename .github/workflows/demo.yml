@@ -42,8 +42,12 @@ jobs:
         run: |
           python3 -m venv /tmp/e2e-venv
           /tmp/e2e-venv/bin/pip install --quiet websockets
-      - name: ffmpeg check
-        run: which ffmpeg && ffmpeg -version | head -1
+      - name: Install ffmpeg
+        run: |
+          if ! which ffmpeg >/dev/null 2>&1; then
+            HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install ffmpeg
+          fi
+          ffmpeg -version | head -1
       - name: Launch app and wait for service
         run: |
           open -a "$HOME/Applications/Instinct Muse.app"
