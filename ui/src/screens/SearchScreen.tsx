@@ -11,21 +11,29 @@ const KIND_ICON: Record<string, () => JSX.Element> = {
   idea: IdeasIcon,
 };
 
-export default function SearchScreen({ initialQuery }: { initialQuery?: string }) {
+export default function SearchScreen({ initialQuery, onOpen }: { initialQuery?: string; onOpen: (result: SearchResult) => void }) {
   const [q, setQ] = useState(initialQuery ?? "");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searched, setSearched] = useState(false);
+  const [error, setError] = useState("");
+  const request = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    setQ(initialQuery ?? "");
+  }, [initialQuery]);
+
+  useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
+    const seq = ++request.current;
+    setError("");
     if (!q.trim()) {
       setResults([]);
       setSearched(false);
       return;
     }
     timer.current = setTimeout(() => {
-      api.search(q).then((r) => { setResults(r.results); setSearched(true); }).catch(() => {});
+      api.search(q).then((r) => { if (seq === request.current) { setResults(r.results); setSearched(true); } }).catch((e) => { if (seq === request.current) { setResults([]); setSearched(false); setError(`Search failed: ${String(e)}`); } });
     }, 300);
   }, [q]);
 
@@ -54,6 +62,7 @@ export default function SearchScreen({ initialQuery }: { initialQuery?: string }
             aria-label="Search"
           />
         </div>
+        {error && <div className="error-banner" role="alert">{error}</div>}
         {searched && results.length === 0 && <p className="dim">Nothing found for "{q}".</p>}
         {Object.entries(grouped).map(([kind, items]) => {
           const Icon = KIND_ICON[kind] ?? DocIcon;
@@ -61,13 +70,13 @@ export default function SearchScreen({ initialQuery }: { initialQuery?: string }
             <section key={kind} className="result-group">
               <h2 className="category-heading">{kind === "chat" ? "Chats" : kind === "artifact" ? "Artefacts" : kind === "goal" ? "Goals" : "Ideas"}</h2>
               {items.map((r) => (
-                <div key={`${kind}-${r.id}`} className="result-row">
+                <button key={`${kind}-${r.id}`} type="button" className="result-row" onClick={() => onOpen(r)} aria-label={`Open ${kind}: ${r.title}`}>
                   <span className="result-icon"><Icon /></span>
                   <div>
                     <h3>{r.title}</h3>
                     <p>{r.snippet}</p>
                   </div>
-                </div>
+                </button>
               ))}
             </section>
           );

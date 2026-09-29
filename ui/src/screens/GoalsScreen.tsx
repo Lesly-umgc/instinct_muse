@@ -23,9 +23,10 @@ export default function GoalsScreen({ initialGoalId }: { initialGoalId?: string 
   const initialGoalDone = useRef(false);
   useEffect(() => {
     if (!initialGoalId || initialGoalDone.current || goals.length === 0) return;
-    const g = goals.find((x) => x.id === initialGoalId) ?? goals[0];
+    const g = goals.find((x) => x.id === initialGoalId);
     initialGoalDone.current = true;
-    setDetail(g);
+    if (g) setDetail(g);
+    else setError("That goal is no longer available.");
   }, [initialGoalId, goals]);
 
   const tracking = goals.filter((g) => g.group_name === "Tracking");

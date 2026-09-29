@@ -157,3 +157,48 @@ def test_startup_leaves_answered_chats_alone(hub):
     hub.store.add_message(conv["id"], "assistant", "hello")
     hub._mark_interrupted_turns()
     assert len(hub.store.list_messages(conv["id"])) == 2
+
+async def test_stop_turn_aborts_engine_and_keeps_partial_reply(hub):
+    engine = FakeEngine(delay=5.0)
+    hub.engines["fake"] = engine
+    conv = make_conv(hub)
+    task = asyncio.create_task(hub.send_user_message(conv["id"], "draft a reply"))
+    hub._turns[conv["id"]] = task
+    while not hub.store.get_conversation(conv["id"])["engine_session_id"]:
+        await asyncio.sleep(0)
+    sid = hub.store.get_conversation(conv["id"])["engine_session_id"]
+    await hub._handle_event(engine, EngineEvent("text_delta", sid, "Partial"))
+    await hub.stop_turn(conv["id"])
+    assert engine.aborted == [sid]
+    assert "Partial" in hub.store.list_messages(conv["id"])[-1]["content"]
+    assert "Stopped" in hub.store.list_messages(conv["id"])[-1]["content"]
+    await hub._handle_event(engine, EngineEvent("message_done", sid))
+    assert len(hub.store.list_messages(conv["id"])) == 2
+
+async def test_stop_during_session_creation_is_visible(hub):
+    class SlowCreate(FakeEngine):
+        async def create_session(self, title=None):
+            await asyncio.sleep(5)
+            return "ses_slow"
+
+    hub.engines["fake"] = SlowCreate()
+    conv = make_conv(hub)
+    task = asyncio.create_task(hub.send_user_message(conv["id"], "hello"))
+    hub._turns[conv["id"]] = task
+    while not hub.store.list_messages(conv["id"]):
+        await asyncio.sleep(0)
+    await hub.stop_turn(conv["id"])
+    assert [m["content"] for m in hub.store.list_messages(conv["id"])] == ["hello", "Reply stopped."]
+
+async def test_stop_racing_with_finished_reply_does_not_add_second_assistant(hub):
+    engine = FakeEngine()
+    hub.engines["fake"] = engine
+    conv = make_conv(hub)
+    await hub.send_user_message(conv["id"], "hello")
+    sid = hub.store.get_conversation(conv["id"])["engine_session_id"]
+    await hub._handle_event(engine, EngineEvent("text_delta", sid, "Finished"))
+    await hub._handle_event(engine, EngineEvent("message_done", sid))
+    task = asyncio.create_task(asyncio.sleep(10))
+    hub._turns[conv["id"]] = task
+    await hub.stop_turn(conv["id"])
+    assert [m["content"] for m in hub.store.list_messages(conv["id"])] == ["hello", "Finished"]

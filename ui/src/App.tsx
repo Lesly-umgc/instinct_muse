@@ -26,6 +26,10 @@ const NAV: { id: Screen; label: string; Icon: () => JSX.Element }[] = [
 export default function App() {
   const [screen, setScreen] = useState<Screen>("chat");
   const [initialChat, setInitialChat] = useState("");
+  const [navigationId, setNavigationId] = useState(0);
+  const [selectedGoal, setSelectedGoal] = useState("");
+  const [selectedArtifact, setSelectedArtifact] = useState("");
+  const [selectedIdea, setSelectedIdea] = useState("");
   const [settingsSection, setSettingsSection] = useState("");
   const [deep, setDeep] = useState<{ goal: string; artifact: string; search: string; forceError: string }>({ goal: "", artifact: "", search: "", forceError: "" });
   useEffect(() => {
@@ -80,12 +84,17 @@ export default function App() {
           <MenuIcon />
         </button>
       </nav>
-      {screen === "chat" && <ChatScreen initialChatId={initialChat} forceError={deep.forceError} />}
-      {screen === "search" && <SearchScreen initialQuery={deep.search} />}
+      {screen === "chat" && <ChatScreen key={navigationId} initialChatId={initialChat} forceError={deep.forceError} />}
+      {screen === "search" && <SearchScreen initialQuery={deep.search} onOpen={(result) => {
+        if (result.kind === "chat") { setInitialChat(result.id); setNavigationId((n) => n + 1); setScreen("chat"); }
+        else if (result.kind === "goal") { setSelectedGoal(result.id); setScreen("goals"); }
+        else if (result.kind === "artifact") { setSelectedArtifact(result.id); setScreen("library"); }
+        else if (result.kind === "idea") { setSelectedIdea(result.id); setScreen("ideas"); }
+      }} />}
       {screen === "feed" && <FeedScreen />}
-      {screen === "ideas" && <IdeasScreen />}
-      {screen === "goals" && <GoalsScreen initialGoalId={deep.goal} />}
-      {screen === "library" && <LibraryScreen initialArtifactId={deep.artifact} />}
+      {screen === "ideas" && <IdeasScreen initialIdeaId={selectedIdea} />}
+      {screen === "goals" && <GoalsScreen initialGoalId={selectedGoal || deep.goal} />}
+      {screen === "library" && <LibraryScreen initialArtifactId={selectedArtifact || deep.artifact} />}
       {screen === "settings" && <SettingsScreen initialSection={settingsSection} />}
     </div>
   );

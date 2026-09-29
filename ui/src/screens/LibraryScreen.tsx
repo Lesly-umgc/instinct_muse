@@ -23,8 +23,9 @@ export default function LibraryScreen({ initialArtifactId }: { initialArtifactId
     api.artifacts().then((r) => {
       setArtifacts(r.artifacts);
       if (initialArtifactId) {
-        const a = r.artifacts.find((x) => x.id === initialArtifactId) ?? r.artifacts[0];
-        if (a) api.artifact(a.id).then(setSelected).catch(() => {});
+        const a = r.artifacts.find((x) => x.id === initialArtifactId);
+        if (a) api.artifact(a.id).then(setSelected).catch((e) => setError(String(e)));
+        else setError("That artefact is no longer available.");
       }
     }).catch((e) => setError(String(e)));
   }, [initialArtifactId]);

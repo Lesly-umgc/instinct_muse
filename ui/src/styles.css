@@ -471,3 +471,11 @@ body { margin: 0; background: var(--bg); color: var(--text); }
   padding: 3px 10px; font-size: 12px; color: var(--text-dim);
 }
 .preview-path { word-break: break-all; font-size: 12px; }
+
+.result-row { width: 100%; text-align: left; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; }
+.result-row:hover, .result-row:focus-visible { background: rgba(127,127,127,.13); outline-offset: -2px; }
+
+.idea-open { color: inherit; font: inherit; font-weight: 600; border: 0; background: transparent; cursor: pointer; text-align: left; }
+.idea-open:hover { text-decoration: underline; }
+
+.composer-stop { border: 1px solid var(--border); border-radius: 9px; background: var(--bg-raised); color: var(--text); padding: 8px 12px; cursor: pointer; }

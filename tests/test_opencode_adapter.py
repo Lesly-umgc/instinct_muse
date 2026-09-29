@@ -85,3 +85,78 @@ def test_normalize_events(payload, expected):
 
 def test_normalize_ignores_unknown():
     assert OpenCodeServerEngine._normalize({"type": "file.edited", "properties": {}}) is None
+
+@respx.mock
+async def test_sync_response_reconciles_provisional_sse_text():
+    import asyncio
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def response(_):
+        started.set()
+        await finish.wait()
+        return httpx.Response(200, json={"parts": [{"type": "text", "text": "Hello world"}]})
+
+    respx.post(f"{BASE}/session/ses_1/message").mock(side_effect=response)
+    engine = OpenCodeServerEngine(BASE)
+    # No live stream needed: inject normalized SSE event while the sync request is pending.
+    send_task = asyncio.create_task(engine.send("ses_1", "hi"))
+    await started.wait()
+    event = engine._normalize({"type": "message.part.updated", "properties": {
+        "part": {"type": "text", "sessionID": "ses_1"}, "delta": "Hello"}})
+    assert event and event.type == "text_delta"
+    engine._streamed["ses_1"] += event.text
+    await engine._responses.put(event)
+    finish.set()
+    await send_task
+    events = engine.events()
+    assert [(await anext(events)).text, (await anext(events)).text, (await anext(events)).type] == ["Hello", " world", "message_done"]
+    await engine.aclose()
+
+
+@respx.mock
+async def test_sync_response_corrects_divergent_provisional_text():
+    respx.post(f"{BASE}/session/ses_2/message").mock(return_value=httpx.Response(200, json={"parts": [{"type": "text", "text": "actual"}]}))
+    engine = OpenCodeServerEngine(BASE)
+    engine._streamed["ses_2"] = "incorrect"
+    # Simulate an SSE update within the HTTP response handler so send can compare it.
+    def response(_):
+        engine._streamed["ses_2"] = "incorrect"
+        return httpx.Response(200, json={"parts": [{"type": "text", "text": "actual"}]})
+    respx.post(f"{BASE}/session/ses_2/message").mock(side_effect=response)
+    await engine.send("ses_2", "hi")
+    events = engine.events()
+    first = await anext(events)
+    assert first.type == "text_replace" and first.text == "actual"
+    assert (await anext(events)).type == "message_done"
+    await engine.aclose()
+
+@respx.mock
+async def test_idle_sse_does_not_finish_before_sync_response():
+    import asyncio
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def response(_):
+        started.set()
+        await finish.wait()
+        return httpx.Response(200, json={"parts": [{"type": "text", "text": "complete"}]})
+
+    respx.post(f"{BASE}/session/ses_idle/message").mock(side_effect=response)
+    # A short, in-memory SSE stream that emits idle ahead of the HTTP response.
+    async def idle_sse(_):
+        await asyncio.sleep(.01)
+        return httpx.Response(200, text='data: {"type":"session.idle","properties":{"sessionID":"ses_idle"}}\n\n')
+    respx.get(f"{BASE}/event").mock(side_effect=idle_sse)
+    engine = OpenCodeServerEngine(BASE)
+    events = engine.events()
+    next_event = asyncio.create_task(anext(events))
+    send_task = asyncio.create_task(engine.send("ses_idle", "hi"))
+    await started.wait()
+    await asyncio.sleep(.02)
+    assert not next_event.done(), "SSE idle must not complete a turn before /message returns"
+    finish.set()
+    await send_task
+    assert (await next_event).text == "complete"
+    assert (await anext(events)).type == "message_done"
+    await engine.aclose()

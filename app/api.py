@@ -61,6 +61,8 @@ class Hub:
         self._sockets: dict[str, set[WebSocket]] = {}  # conversation_id -> sockets
         self._sessions: dict[str, str] = {}  # engine_session_id -> conversation_id
         self._shutting_down = False
+        self._turns: dict[str, asyncio.Task] = {}
+        self._stopped_sessions: set[str] = set()
 
     async def startup(self) -> None:
         self.cli_probes = await detect_all()
@@ -123,9 +125,14 @@ class Hub:
 
     async def _handle_event(self, engine: EngineAdapter, ev: EngineEvent) -> None:
         cid = self._sessions.get(ev.session_id)
+        if ev.session_id in self._stopped_sessions and ev.type in ("text_delta", "text_replace", "message_done"):
+            return
         if ev.type == "text_delta":
             self._buffers.setdefault(ev.session_id, []).append(ev.text)
             await self._broadcast(cid, {"type": "text_delta", "text": ev.text})
+        elif ev.type == "text_replace":
+            self._buffers[ev.session_id] = [ev.text]
+            await self._broadcast(cid, {"type": "text_replace", "text": ev.text})
         elif ev.type == "message_done":
             text = "".join(self._buffers.pop(ev.session_id, []))
             if cid and text:
@@ -225,6 +232,39 @@ class Hub:
             self._sockets[cid].discard(ws)
 
     # -- chat ---------------------------------------------------------------
+    async def stop_turn(self, cid: str) -> None:
+        task = self._turns.get(cid)
+        if not task or task.done():
+            return
+        conv = self.store.get_conversation(cid)
+        sid = conv["engine_session_id"] if conv else None
+        if sid:
+            # Fence late SSE/sync events before asking the engine to abort.
+            self._stopped_sessions.add(sid)
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        # A prior completion may have won the race against Stop while the
+        # cancellation was pending. Do not persist a second assistant message.
+        # Session creation may have finished as the cancellation landed.
+        conv = self.store.get_conversation(cid)
+        sid = conv["engine_session_id"] if conv else None
+        if sid:
+            self._stopped_sessions.add(sid)
+            engine = self.engines.get(conv["engine"])
+            if engine:
+                try:
+                    await asyncio.wait_for(engine.abort(sid), timeout=5)
+                except Exception:
+                    log.exception("abort failed conversation=%s", cid)
+        text = "".join(self._buffers.pop(sid, [])) if sid else ""
+        recent = self.store.list_messages(cid)
+        if recent and recent[-1]["role"] == "assistant":
+            return
+        self.store.add_message(cid, "assistant", text + "\n\n[Stopped]" if text else "Reply stopped.")
+        await self._broadcast(cid, {"type": "message_done"})
+        await self._broadcast(cid, {"type": "status", "state": "stopped"})
+
     async def send_user_message(self, cid: str, text: str) -> None:
         conv = self.store.get_conversation(cid)
         if not conv:
@@ -246,6 +286,7 @@ class Hub:
             # still carry their engine_session_id, and replies without a
             # mapping were silently discarded.
             self._sessions[session_id] = cid
+            self._stopped_sessions.discard(session_id)
             provider_id = model_id = None
             if conv["model"] and "/" in conv["model"]:
                 provider_id, model_id = conv["model"].split("/", 1)
@@ -254,6 +295,8 @@ class Hub:
             await self._broadcast(cid, {"type": "status", "state": "working"})
             await asyncio.wait_for(engine.send(session_id, text, provider_id, model_id),
                                    timeout=REPLY_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            raise
         except asyncio.TimeoutError:
             log.error("turn timeout conversation=%s session=%s", cid, session_id)
             with suppress(Exception):
@@ -645,11 +688,15 @@ async def conversation_ws(ws: WebSocket, cid: str) -> None:
             except json.JSONDecodeError:
                 await ws.send_text(json.dumps({"type": "error", "text": "expected JSON"}))
                 continue
-            if msg.get("type") == "message" and msg.get("text", "").strip():
-                # Run the engine round-trip in the background: the receive loop
-                # must stay responsive, and a client disconnect or UI
-                # chat-switch must not strand or crash an in-flight reply.
-                asyncio.create_task(_send_safe(cid, msg["text"].strip()))
+            if msg.get("type") == "stop":
+                await hub.stop_turn(cid)
+            elif msg.get("type") == "message" and isinstance(msg.get("text"), str) and msg["text"].strip():
+                task = hub._turns.get(cid)
+                if task and not task.done():
+                    await ws.send_text(json.dumps({"type": "error", "text": "Reply in progress. Stop it before sending another message."}))
+                    continue
+                task = asyncio.create_task(_send_safe(cid, msg["text"].strip()))
+                hub._turns[cid] = task
     except Exception:
         # WebSocketDisconnect on a normal close, WebSocketDisconnected/RuntimeError
         # on a mid-request disconnect race: all of them just mean "client gone".
@@ -661,5 +708,7 @@ async def conversation_ws(ws: WebSocket, cid: str) -> None:
 async def _send_safe(cid: str, text: str) -> None:
     try:
         await hub.send_user_message(cid, text)
+    except asyncio.CancelledError:
+        raise
     except Exception:
         log.exception("send failed conversation=%s", cid)

@@ -25,3 +25,25 @@ def test_post_and_get_preflight_still_allowed():
             "Access-Control-Request-Method": method,
         })
         assert r.status_code == 200
+
+
+def test_untrusted_origin_rejected_for_mutations():
+    client = TestClient(app)
+    response = client.post("/api/data/reset", headers={"Origin": "https://attacker.example", "Host": "127.0.0.1:18764"})
+    assert response.status_code == 403
+
+
+def test_host_rebinding_rejected():
+    client = TestClient(app)
+    response = client.get("/health", headers={"Host": "attacker.example"})
+    assert response.status_code == 403
+
+
+def test_untrusted_websocket_origin_rejected():
+    from starlette.websockets import WebSocketDisconnect
+    client = TestClient(app)
+    with __import__('pytest').raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect('/ws/conversations/any', headers={
+            'Origin': 'https://attacker.example', 'Host': '127.0.0.1:18764'}):
+            pass
+    assert exc.value.code == 1008

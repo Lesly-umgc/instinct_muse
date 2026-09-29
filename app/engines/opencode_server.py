@@ -32,6 +32,9 @@ class OpenCodeServerEngine:
         self._sse_client = httpx.AsyncClient(base_url=self._base, auth=auth, timeout=None)
         self._sse_task: asyncio.Task | None = None
         self._responses: asyncio.Queue[EngineEvent] = asyncio.Queue()
+        self._active: set[str] = set()
+        self._streamed: dict[str, str] = {}
+        self._send_locks: dict[str, asyncio.Lock] = {}
 
     # -- status / catalog ------------------------------------------------
     async def status(self) -> EngineStatus:
@@ -72,19 +75,38 @@ class OpenCodeServerEngine:
 
     async def send(self, session_id: str, text: str,
                    provider_id: str | None = None, model_id: str | None = None) -> None:
+        async with self._send_locks.setdefault(session_id, asyncio.Lock()):
+            await self._send_locked(session_id, text, provider_id, model_id)
+
+    async def _send_locked(self, session_id: str, text: str,
+                           provider_id: str | None, model_id: str | None) -> None:
         body: dict[str, Any] = {"parts": [{"type": "text", "text": text}]}
         if provider_id and model_id:
             body["model"] = {"providerID": provider_id, "modelID": model_id}
-        # OpenCode 1.18.x can accept prompt_async with 204 while delivering no
-        # SSE events. Use the sync endpoint and emit its durable response.
-        r = await self._client.post(f"/session/{session_id}/message", json=body)
-        r.raise_for_status()
-        response = r.json()
-        text = "".join(part.get("text", "") for part in response.get("parts", []) if part.get("type") == "text")
-        await self._responses.put(EngineEvent("text_delta", session_id=session_id, text=text))
-        await self._responses.put(EngineEvent("message_done", session_id=session_id))
+        # Keep the reliable sync response while forwarding genuine SSE deltas.
+        # Some OpenCode versions return a 204 for prompt_async without events.
+        self._active.add(session_id)
+        self._streamed[session_id] = ""
+        try:
+            r = await self._client.post(f"/session/{session_id}/message", json=body)
+            r.raise_for_status()
+            response = r.json()
+            final = "".join(part.get("text", "") for part in response.get("parts", []) if part.get("type") == "text")
+            self._active.discard(session_id)
+            streamed = self._streamed.pop(session_id, "")
+            if final.startswith(streamed):
+                if final[len(streamed):]:
+                    await self._responses.put(EngineEvent("text_delta", session_id=session_id, text=final[len(streamed):]))
+            elif final != streamed:
+                await self._responses.put(EngineEvent("text_replace", session_id=session_id, text=final))
+            await self._responses.put(EngineEvent("message_done", session_id=session_id))
+        finally:
+            self._active.discard(session_id)
+            self._streamed.pop(session_id, None)
 
     async def abort(self, session_id: str) -> None:
+        self._active.discard(session_id)
+        self._streamed.pop(session_id, None)
         r = await self._client.post(f"/session/{session_id}/abort")
         r.raise_for_status()
 
@@ -109,10 +131,7 @@ class OpenCodeServerEngine:
 
     # -- events -------------------------------------------------------------
     async def events(self) -> AsyncIterator[EngineEvent]:
-        # Sync /message gives a reliable response without relying on OpenCode's
-        # currently unreliable SSE bus for text. The bus is still the only way
-        # to see permission requests and session errors while a sync call is
-        # blocked, so listen to it for those event types only.
+        # SSE gives provisional text; the sync response reconciles final content.
         if self._sse_task is None:
             self._sse_task = asyncio.create_task(self._sse_loop())
         while True:
@@ -132,8 +151,13 @@ class OpenCodeServerEngine:
                         except ValueError:
                             continue
                         ev = self._normalize(payload)
-                        if ev and ev.type in ("permission_request", "error"):
+                        if ev and ev.type == "text_delta" and ev.session_id in self._active:
+                            self._streamed[ev.session_id] = self._streamed.get(ev.session_id, "") + ev.text
                             await self._responses.put(ev)
+                        elif ev and ev.type in ("permission_request", "error"):
+                            await self._responses.put(ev)
+                        # session.idle may precede the synchronous /message
+                        # response. Only that response finalizes/persists a turn.
             except asyncio.CancelledError:
                 return
             except Exception:

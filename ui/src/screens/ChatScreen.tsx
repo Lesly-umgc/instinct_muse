@@ -29,8 +29,11 @@ export default function ChatScreen({ initialChatId, forceError }: { initialChatI
   const [filter, setFilter] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const messagesRef = useRef<LocalMessage[]>([]);
+  messagesRef.current = messages;
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const [thinking, setThinking] = useState(false);
+  const [working, setWorking] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const activeRef = useRef<Conversation | null>(null);
   activeRef.current = active;
@@ -120,65 +123,111 @@ export default function ChatScreen({ initialChatId, forceError }: { initialChatI
       setAttaching(false);
     }
   };
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectionEpoch = useRef(0);
+  const mounted = useRef(true);
   const openConversation = useCallback((conv: Conversation) => {
     const cur = wsRef.current;
-    setActive((prev) => {
-      if (prev?.id === conv.id && cur && (cur.readyState === WebSocket.OPEN || cur.readyState === WebSocket.CONNECTING)) {
-        return prev;
-      }
-      cur?.close();
-      setError("");
-      api.conversation(conv.id).then((full) => {
-        setMessages((full.messages ?? []).map((m: Message) => ({
-          role: m.role, content: m.content, ts: m.created_at,
-        })));
-      });
-      const ws = conversationSocket(conv.id, (ev) => {
-        if (ev.type === "status" && ev.state === "working") {
-          setThinking(true);
-        } else if (ev.type === "text_delta") {
-          setThinking(false);
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (last && last.role === "assistant" && last.streaming) {
-              return [...prev.slice(0, -1), { ...last, content: last.content + String(ev.text ?? "") }];
-            }
-            return [...prev, { role: "assistant", content: String(ev.text ?? ""), streaming: true }];
-          });
-        } else if (ev.type === "message_done") {
-          setThinking(false);
-          setMessages((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: undefined } : m)));
-          refreshConversations();
-        } else if (ev.type === "approval") {
-          setApprovals((prev) => [...prev, ev.approval as Approval]);
-        } else if (ev.type === "error") {
-          setThinking(false);
-          setMessages((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: undefined } : m)));
-          setError(String(ev.text ?? "unknown error"));
-        } else if (ev.type === "conversation_renamed") {
-          refreshConversations();
-          setActive((a) => (a && a.id === ev.conversation_id ? { ...a, title: String(ev.title ?? a.title) } : a));
-        } else if (ev.type === "conversation_deleted") {
-          if (ev.conversation_id === conv.id) {
-            setActive(null);
-            setMessages([]);
+    if (activeRef.current?.id === conv.id && cur &&
+        (cur.readyState === WebSocket.OPEN || cur.readyState === WebSocket.CONNECTING)) return;
+    if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+    const epoch = ++connectionEpoch.current;
+    cur?.close();
+    setActive(conv);
+    activeRef.current = conv;
+    setThinking(false);
+    setWorking(false);
+    setError("");
+    const ws = conversationSocket(conv.id, (ev) => {
+      if (!mounted.current || epoch !== connectionEpoch.current || wsRef.current !== ws) return;
+      if (ev.type === "status" && ev.state === "working") {
+        setThinking(true);
+        setWorking(true);
+      } else if (ev.type === "text_delta") {
+        setThinking(false);
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.role === "assistant" && last.streaming) {
+            return [...prev.slice(0, -1), { ...last, content: last.content + String(ev.text ?? "") }];
           }
-          refreshConversations();
+          return [...prev, { role: "assistant", content: String(ev.text ?? ""), streaming: true }];
+        });
+      } else if (ev.type === "text_replace") {
+        setThinking(false);
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          return last?.streaming ? [...prev.slice(0, -1), { ...last, content: String(ev.text ?? "") }] : [...prev, { role: "assistant", content: String(ev.text ?? ""), streaming: true }];
+        });
+      } else if (ev.type === "message_done") {
+        setThinking(false);
+        setWorking(false);
+        setMessages((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: undefined } : m)));
+        refreshConversations();
+        // Reconcile the saved reply, including a completion that arrived after a socket gap.
+        api.conversation(conv.id).then((full) => {
+          if (mounted.current && epoch === connectionEpoch.current) setMessages((full.messages ?? []).map((m) => ({ role: m.role, content: m.content, ts: m.created_at })));
+        }).catch((e) => { if (mounted.current && epoch === connectionEpoch.current) setError(String(e)); });
+      } else if (ev.type === "status" && ev.state === "stopped") {
+        setThinking(false);
+        setWorking(false);
+        api.conversation(conv.id).then((full) => {
+          if (mounted.current && epoch === connectionEpoch.current) setMessages((full.messages ?? []).map((m) => ({ role: m.role, content: m.content, ts: m.created_at })));
+        }).catch((e) => { if (mounted.current && epoch === connectionEpoch.current) setError(String(e)); });
+      } else if (ev.type === "approval") {
+        setApprovals((prev) => [...prev, ev.approval as Approval]);
+      } else if (ev.type === "error") {
+        setThinking(false);
+        setWorking(false);
+        setMessages((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: undefined } : m)));
+        setError(String(ev.text ?? "unknown error"));
+      } else if (ev.type === "conversation_renamed") {
+        refreshConversations();
+        setActive((a) => (a && a.id === ev.conversation_id ? { ...a, title: String(ev.title ?? a.title) } : a));
+      } else if (ev.type === "conversation_deleted") {
+        if (ev.conversation_id === conv.id) {
+          setActive(null);
+          activeRef.current = null;
+          setMessages([]);
         }
-      });
-      ws.onclose = () => {
-        setTimeout(() => {
-          setActive((a) => {
-            if (a && a.id === conv.id && wsRef.current === ws && ws.readyState === WebSocket.CLOSED) {
-              openConversation(conv);
-            }
-            return a;
-          });
-        }, 1500);
-      };
-      wsRef.current = ws;
-      return conv;
+        refreshConversations();
+      }
     });
+    wsRef.current = ws;
+    ws.onopen = () => {
+      // The server stores messages, not replayable socket events. Read them after
+      // reconnect so replies completed during a network gap are not lost.
+      api.conversation(conv.id).then((full) => {
+        if (!mounted.current || epoch !== connectionEpoch.current || wsRef.current !== ws) return;
+        const saved = full.messages ?? [];
+        const lastSaved = saved[saved.length - 1];
+        if (lastSaved?.role === "assistant") {
+          // Do not replace a newer optimistic user message or a live partial
+          // reply with older saved history returned from an in-flight request.
+          const current = messagesRef.current;
+          const latest = current[current.length - 1];
+          const newerUser = latest?.role === "user" && (latest.ts ?? 0) > (lastSaved.created_at ?? 0);
+          if (!newerUser && !latest?.streaming) {
+            setThinking(false);
+            setWorking(false);
+            setMessages(saved.map((m) => ({ role: m.role, content: m.content, ts: m.created_at })));
+          }
+        } else {
+          setMessages((prev) => {
+            // A live partial reply can be ahead of the persisted history.
+            if (prev[prev.length - 1]?.streaming) return prev;
+            return saved.map((m) => ({ role: m.role, content: m.content, ts: m.created_at }));
+          });
+          if (lastSaved?.role === "user") setWorking(true);
+        }
+      }).catch((e) => { if (mounted.current && epoch === connectionEpoch.current) setError(String(e)); });
+    };
+    ws.onclose = () => {
+      if (!mounted.current || epoch !== connectionEpoch.current) return;
+      reconnectTimer.current = setTimeout(() => {
+        if (mounted.current && epoch === connectionEpoch.current &&
+            activeRef.current?.id === conv.id && wsRef.current === ws) openConversation(conv);
+      }, 1500);
+    };
   }, [refreshConversations]);
   openConversationRef.current = openConversation;
 
@@ -191,7 +240,15 @@ export default function ChatScreen({ initialChatId, forceError }: { initialChatI
     }
   }, [initialChatId, conversations, openConversation]);
 
-  useEffect(() => () => wsRef.current?.close(), []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      connectionEpoch.current++;
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+      wsRef.current?.close();
+    };
+  }, []);
 
   const newChat = async (title = "New chat") => {
     if (!engine) return null;
@@ -227,7 +284,14 @@ export default function ChatScreen({ initialChatId, forceError }: { initialChatI
     }
     setConfirmDeleteId(null);
     if (activeRef.current?.id === conv.id) {
+      connectionEpoch.current++;
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+      wsRef.current?.close();
+      wsRef.current = null;
+      activeRef.current = null;
       setActive(null);
+      setWorking(false);
+      setThinking(false);
       setMessages([]);
     }
     refreshConversations();
@@ -249,9 +313,13 @@ export default function ChatScreen({ initialChatId, forceError }: { initialChatI
     setTimeout(() => deliver(cid, payload, attempt + 1), 500);
   };
 
+  const stop = () => {
+    if (active) deliver(active.id, JSON.stringify({ type: "stop" }), 0);
+  };
+
   const send = () => {
     const text = draft.trim();
-    if (!text || !active) return;
+    if (!text || !active || working) return;
     setMessages((prev) => [...prev, { role: "user", content: text, ts: Date.now() / 1000 }]);
     setDraft("");
     deliver(active.id, JSON.stringify({ type: "message", text }), 0);
@@ -451,7 +519,8 @@ export default function ChatScreen({ initialChatId, forceError }: { initialChatI
             <button className="composer-mic" aria-label="Dictate" disabled={!active}>
               <MicIcon />
             </button>
-            <button className="composer-send" onClick={send} disabled={!active || !draft.trim()} aria-label="Send">
+            {working && <button className="composer-stop" onClick={stop} aria-label="Stop reply">Stop</button>}
+            <button className="composer-send" onClick={send} disabled={!active || !draft.trim() || working} aria-label="Send">
               <SendIcon />
             </button>
           </div>
